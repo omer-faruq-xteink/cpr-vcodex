@@ -934,8 +934,12 @@ void HomeActivity::loop() {
             std::make_unique<ConfirmationActivity>(renderer, mappedInput, I18N.get(confirmationPrompt),
                                                    getRecentBookConfirmationLabel(selectedBook)),
             [this, selectedBook, currentSelection, deleteFromFavorites](const ActivityResult& result) {
+              if (isLyraCarouselTheme()) {
+                invalidateResidentCarouselFrame();
+              }
+
               if (result.isCancelled) {
-                requestUpdate();
+                requestUpdate(true);
                 return;
               }
 

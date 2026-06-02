@@ -80,7 +80,8 @@ def _legacy_pointer_patch_present(jpeg_dir):
             content = fh.read()
     except OSError:
         return False
-    return "CrossPoint patch: safe pMCU for MCU_SKIP" in content
+    return ("CrossPoint patch: safe pMCU for MCU_SKIP" in content or
+            "CrossPoint patch: redirect pMCU to sMCUs[0] when MCU_SKIP" in content)
 
 
 def _apply_legacy_dc_guard(jpeg_dir):

@@ -14,6 +14,7 @@
 #include <limits>
 
 #include "AchievementsStore.h"
+#include "DictionaryStore.h"
 #include "BookmarksActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -307,6 +308,197 @@ void EpubReaderActivity::loop() {
 
   READING_STATS.tickActiveSession();
   const unsigned long nowMs = millis();
+
+  // Dictionary mode: power button toggles mode, navigation moves cursor
+  if (SETTINGS.shortPwrBtn == CrossPointSettings::DICT_MODE &&
+      mappedInput.wasReleased(MappedInputManager::Button::Power)) {
+    dictModeActive = !dictModeActive;
+    if (dictModeActive) {
+      dictCursorLineIdx = 0;
+      dictCursorWordIdx = 0;
+      dictDefinition[0] = '\0';
+      dictPopupVisible = false;
+      dictActiveDictIdx = 0;
+      dictPopupScrollOffset = 0;
+      // Lazy-initialise: scan and load config the first time dict mode is
+      // entered so that dictionaries are available without requiring the user
+      // to open the Dictionary Settings screen first.
+      if (DICT_STORE.getEntries().empty()) {
+        DICT_STORE.scan();
+        DICT_STORE.loadConfig();
+        // Load checkpoints only for enabled dicts — conserves RAM.
+        DICT_STORE.syncCheckpointsToEnabled();
+      }
+    } else {
+      // Exiting dict mode: also cancel any active highlight selection.
+      highlightModeActive = false;
+    }
+    requestUpdate();
+    return;
+  }
+
+  if (dictModeActive) {
+    // Back: cancel highlight mode (if active), else close popup, else exit dict mode
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      if (highlightModeActive) {
+        highlightModeActive = false;
+        requestUpdate();
+        return;
+      }
+      if (dictPopupVisible) {
+        dictPopupVisible = false;
+        dictDefinition[0] = '\0';
+      } else {
+        dictModeActive = false;
+      }
+      requestUpdate();
+      return;
+    }
+
+    // Long-press Confirm: enter highlight/text-selection mode anchored at current cursor
+    if (!highlightModeActive && !dictPopupVisible &&
+        mappedInput.wasReleased(MappedInputManager::Button::Confirm) &&
+        mappedInput.getHeldTime() >= bookmarkToggleMs) {
+      highlightModeActive = true;
+      highlightAnchorLineIdx = dictCursorLineIdx;
+      highlightAnchorWordIdx = dictCursorWordIdx;
+      requestUpdate();
+      return;
+    }
+
+    // Short-press Confirm in highlight mode: save selection to MyCLippings and exit highlight mode
+    if (highlightModeActive && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      saveHighlightToMyCLippings();
+      highlightModeActive = false;
+      requestUpdate();
+      return;
+    }
+
+    // Short-press Confirm (normal dict mode): look up the word under the cursor and show popup
+    if (!highlightModeActive && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      dictPopupVisible = true;  // lookup happens in render from page data
+      dictActiveDictIdx = 0;
+      dictPopupScrollOffset = 0;
+      requestUpdate();
+      return;
+    }
+
+    // When popup is open: Up/Down (= PageBack/PageForward, same physical side buttons)
+    // scroll the definition. At the top boundary Up switches to the previous dictionary;
+    // at the bottom boundary Down switches to the next dictionary.
+    // dictLineNav is used so the proven repeat-timer mechanism is shared with cursor nav.
+    if (dictPopupVisible) {
+      constexpr int POPUP_VISIBLE_LINES = 4;
+      bool popupChanged = false;
+      dictLineNav.onPressAndContinuous(
+          {MappedInputManager::Button::Up, MappedInputManager::Button::PageBack}, [&] {
+            if (dictPopupScrollOffset > 0) {
+              // Go back one full page (scrollOffset is always a POPUP_VISIBLE_LINES multiple).
+              dictPopupScrollOffset -= POPUP_VISIBLE_LINES;
+              popupChanged = true;
+            } else if (dictActiveDictIdx > 0 && dictLookedUpWord[0] != '\0') {
+              // Backward search: find the nearest previous dict that has a definition.
+              int prevIdx = dictActiveDictIdx - 1;
+              char testDef[32];
+              while (prevIdx >= 0 &&
+                     !DICT_STORE.lookupInEnabledEntry(prevIdx, dictLookedUpWord, testDef, sizeof(testDef))) {
+                prevIdx--;
+              }
+              if (prevIdx >= 0) {
+                dictActiveDictIdx = prevIdx;
+                dictDefinition[0] = '\0';
+                dictPopupScrollOffset = 0;
+                dictPopupTotalLines = 0;
+                popupChanged = true;
+              }
+            }
+          });
+      dictLineNav.onPressAndContinuous(
+          {MappedInputManager::Button::Down, MappedInputManager::Button::PageForward}, [&] {
+            // totalPages = ceil(totalLines / POPUP_VISIBLE_LINES)
+            const int totalPages = (dictPopupTotalLines + POPUP_VISIBLE_LINES - 1) / POPUP_VISIBLE_LINES;
+            const int currentPage = (POPUP_VISIBLE_LINES > 0)
+                                        ? dictPopupScrollOffset / POPUP_VISIBLE_LINES
+                                        : 0;
+            if (currentPage < totalPages - 1) {
+              // Advance one page; scrollOffset stays a POPUP_VISIBLE_LINES multiple.
+              dictPopupScrollOffset += POPUP_VISIBLE_LINES;
+              popupChanged = true;
+            } else if (dictLookedUpWord[0] != '\0') {
+              // Forward search: find the nearest next dict that has a definition.
+              int nextIdx = dictActiveDictIdx + 1;
+              char testDef[32];
+              while (nextIdx < DICT_STORE.enabledCount() &&
+                     !DICT_STORE.lookupInEnabledEntry(nextIdx, dictLookedUpWord, testDef, sizeof(testDef))) {
+                nextIdx++;
+              }
+              if (nextIdx < DICT_STORE.enabledCount()) {
+                dictActiveDictIdx = nextIdx;
+                dictDefinition[0] = '\0';
+                dictPopupScrollOffset = 0;
+                dictPopupTotalLines = 0;
+                popupChanged = true;
+              }
+            }
+          });
+      if (popupChanged) requestUpdate();
+      return;
+    }
+
+    // Navigation — uses ButtonNavigator so each axis has its own repeat timer.
+    // This prevents cross-axis timer interference (right-hold firing up, etc.).
+    bool cursorMoved = false;
+
+    dictLineNav.onPressAndContinuous(
+        {MappedInputManager::Button::Up, MappedInputManager::Button::PageBack}, [&] {
+          if (dictCursorLineIdx > 0) {
+            dictCursorLineIdx--;
+            dictCursorWordIdx = 0;
+            dictPopupVisible = false;
+            dictDefinition[0] = '\0';
+            cursorMoved = true;
+          }
+        });
+
+    dictLineNav.onPressAndContinuous(
+        {MappedInputManager::Button::Down, MappedInputManager::Button::PageForward}, [&] {
+          dictCursorLineIdx++;
+          dictCursorWordIdx = 0;
+          dictPopupVisible = false;
+          dictDefinition[0] = '\0';
+          cursorMoved = true;
+        });
+
+    dictWordNav.onPressAndContinuous({MappedInputManager::Button::Left}, [&] {
+      if (dictCursorWordIdx > 0) {
+        dictCursorWordIdx--;
+      } else if (dictCursorLineIdx > 0) {
+        dictCursorLineIdx--;
+        dictCursorWordIdx = 999;  // will be clamped on render
+      }
+      dictPopupVisible = false;
+      dictDefinition[0] = '\0';
+      cursorMoved = true;
+    });
+
+    dictWordNav.onPressAndContinuous({MappedInputManager::Button::Right}, [&] {
+      if (dictCursorWordIdx + 1 < dictCurrentLineWordCount) {
+        dictCursorWordIdx++;
+      } else {
+        // end of line: wrap to first word of next line
+        dictCursorLineIdx++;
+        dictCursorWordIdx = 0;
+      }
+      dictPopupVisible = false;
+      dictDefinition[0] = '\0';
+      cursorMoved = true;
+    });
+
+    if (cursorMoved) {
+      requestUpdate(true);  // immediate: wake render task without waiting for loop end
+    }
+    return;
+  }
 
   if (waitingForConfirmSecondClick && ReaderUtils::hasNonConfirmNavigationInput(mappedInput)) {
     waitingForConfirmSecondClick = false;
@@ -1161,9 +1353,256 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // Collect footnotes from the loaded page
     currentPageFootnotes = std::move(p->footnotes);
 
+    // Dict mode: extract cursor word position before page is consumed
+    struct DictCursorInfo {
+      bool valid = false;
+      int16_t x = 0;
+      int16_t y = 0;
+      int16_t lineH = 0;
+      int16_t wordW = 0;        // pixel width of displayWord (for highlight rect)
+      std::string word;         // alpha-stripped / hyphen-stitched word for lookup
+      std::string displayWord;  // raw token as rendered on screen (for white re-draw)
+    } dictCursor;
+
+    // Highlight mode: word positions for the selected range, collected before page is consumed.
+    // Stack-allocated — only populated when highlightModeActive, zero cost otherwise.
+    struct HlWord {
+      int16_t x, y, w;
+      char text[20];  // raw display token, null-terminated, truncated to 19 chars
+    };
+    constexpr int MAX_HL_WORDS = 96;
+    HlWord hlWords[MAX_HL_WORDS];
+    int hlWordCount = 0;
+
+    if (dictModeActive) {
+      // First pass: count all PageLine elements to get total for clamping.
+      int totalLines = 0;
+      for (const auto& el : p->elements) {
+        if (el->getTag() == TAG_PageLine) totalLines++;
+      }
+      // Clamp BEFORE searching so we always find a valid entry.
+      if (totalLines > 0 && dictCursorLineIdx >= totalLines) {
+        dictCursorLineIdx = totalLines - 1;
+      }
+
+      // Second pass: find the target line.
+      // Also collect context words from adjacent lines for hyphenation detection:
+      //   prevLineLastRaw – last stored word of line (dictCursorLineIdx-1)
+      //   nextLineFirstRaw – first stored word of line (dictCursorLineIdx+1)
+      // When the hyphenator split a word at a line break it appends a literal '-'
+      // to the prefix entry and places the remainder as the first word of the next
+      // line.  We detect both halves so that a lookup on either half finds the
+      // full word.
+      int lineIdx = 0;
+      std::string rawWord;
+      std::string prevLineLastRaw;
+      std::string nextLineFirstRaw;
+      bool foundCursorLine = false;
+
+      for (const auto& el : p->elements) {
+        if (el->getTag() != TAG_PageLine) continue;
+        const auto* pl = static_cast<const PageLine*>(el.get());
+        const auto& elWords = pl->getBlock()->getWords();
+
+        if (lineIdx == dictCursorLineIdx - 1) {
+          if (!elWords.empty()) prevLineLastRaw = elWords.back();
+        }
+
+        if (lineIdx == dictCursorLineIdx) {
+          foundCursorLine = true;
+          if (!elWords.empty()) {
+            const auto& xpos = pl->getBlock()->getWordXpos();
+            dictCurrentLineWordCount = static_cast<int>(elWords.size());
+            if (dictCursorWordIdx >= dictCurrentLineWordCount) {
+              dictCursorWordIdx = dictCurrentLineWordCount - 1;
+            }
+            dictCursor.valid = true;
+            dictCursor.x = pl->xPos + orientedMarginLeft + xpos[dictCursorWordIdx];
+            dictCursor.y = pl->yPos + orientedMarginTop;
+            rawWord = elWords[dictCursorWordIdx];
+            dictCursor.displayWord = rawWord;
+            const int readerFontId = SETTINGS.getReaderFontId();
+            dictCursor.lineH = static_cast<int16_t>(renderer.getLineHeight(readerFontId));
+            dictCursor.wordW  = static_cast<int16_t>(renderer.getTextWidth(readerFontId, rawWord.c_str()));
+            // Strip leading/trailing punctuation so the lookup word is clean.
+            size_t ws = 0;
+            while (ws < rawWord.size() && !isalpha(static_cast<unsigned char>(rawWord[ws]))) ws++;
+            size_t we = rawWord.size();
+            while (we > ws && !isalpha(static_cast<unsigned char>(rawWord[we - 1]))) we--;
+            dictCursor.word = rawWord.substr(ws, we - ws);
+          }
+        }
+
+        if (foundCursorLine && lineIdx == dictCursorLineIdx + 1) {
+          if (!elWords.empty()) nextLineFirstRaw = elWords.front();
+          break;
+        }
+
+        lineIdx++;
+      }
+
+      // Hyphenation detection: the hyphenator stores "ridic-" on line N and
+      // "ulous" on line N+1.  We stitch both halves so the full word is looked up.
+      if (!dictCursor.word.empty()) {
+        // Helper: extract the alpha-only core of a raw word token.
+        auto alphaCore = [](const std::string& w) -> std::string {
+          size_t s = 0;
+          while (s < w.size() && !isalpha(static_cast<unsigned char>(w[s]))) s++;
+          size_t e = w.size();
+          while (e > s && !isalpha(static_cast<unsigned char>(w[e - 1]))) e--;
+          return w.substr(s, e - s);
+        };
+
+        // Case 1: selected word's raw form ends with '-' → cursor is on the
+        //         first half; append the alpha core of the next line's first word.
+        if (!rawWord.empty() && rawWord.back() == '-' && !nextLineFirstRaw.empty()) {
+          dictCursor.word += alphaCore(nextLineFirstRaw);
+        }
+        // Case 2: cursor is on the first word of the line AND the previous
+        //         line's last word ends with '-' → cursor is on the second half;
+        //         prepend the alpha core (without the trailing '-') of that word.
+        else if (dictCursorWordIdx == 0 && !prevLineLastRaw.empty() &&
+                 prevLineLastRaw.back() == '-') {
+          dictCursor.word = alphaCore(prevLineLastRaw) + dictCursor.word;
+        }
+      }
+
+      // Perform dictionary lookup only when Confirm was pressed (dictPopupVisible set in loop).
+      // Try dicts starting from dictActiveDictIdx; auto-advance to the first dict that has a hit
+      // (restores the original fallback behaviour while still allowing manual dict switching).
+      if (dictCursor.valid && dictPopupVisible && dictDefinition[0] == '\0') {
+        const int numDicts = DICT_STORE.enabledCount();
+        bool found = false;
+        for (int di = dictActiveDictIdx; di < numDicts; di++) {
+          if (DICT_STORE.lookupInEnabledEntry(di, dictCursor.word.c_str(),
+                                              dictDefinition, sizeof(dictDefinition))) {
+            dictActiveDictIdx = di;
+            // Save the word so loop() can search backward across dicts.
+            strncpy(dictLookedUpWord, dictCursor.word.c_str(), sizeof(dictLookedUpWord) - 1);
+            dictLookedUpWord[sizeof(dictLookedUpWord) - 1] = '\0';
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          strncpy(dictDefinition, tr(STR_NO_DEFINITION), sizeof(dictDefinition) - 1);
+          dictDefinition[sizeof(dictDefinition) - 1] = '\0';
+        }
+      }
+
+      // Highlight mode: collect word positions for the selection range.
+      if (highlightModeActive) {
+        // Clamp anchor in case the page was re-rendered with fewer lines.
+        if (totalLines > 0 && highlightAnchorLineIdx >= totalLines) {
+          highlightAnchorLineIdx = totalLines - 1;
+        }
+
+        int selStartLine = highlightAnchorLineIdx;
+        int selStartWord = highlightAnchorWordIdx;
+        int selEndLine = dictCursorLineIdx;
+        int selEndWord = dictCursorWordIdx;
+
+        // Normalise: ensure start <= end positionally.
+        if (selEndLine < selStartLine ||
+            (selEndLine == selStartLine && selEndWord < selStartWord)) {
+          std::swap(selStartLine, selEndLine);
+          std::swap(selStartWord, selEndWord);
+        }
+
+        const int hlFontId = SETTINGS.getReaderFontId();
+        int li = 0;
+        for (const auto& el : p->elements) {
+          if (el->getTag() != TAG_PageLine) continue;
+          if (li > selEndLine) break;
+          if (li >= selStartLine) {
+            const auto* pl = static_cast<const PageLine*>(el.get());
+            if (!pl->getBlock()) { li++; continue; }
+            const auto& hlElWords = pl->getBlock()->getWords();
+            const auto& hlXpos   = pl->getBlock()->getWordXpos();
+            const int numWords = static_cast<int>(hlElWords.size());
+            if (numWords == 0) { li++; continue; }
+
+            const int wFirst = (li == selStartLine) ? std::min(selStartWord, numWords - 1) : 0;
+            const int wLast  = (li == selEndLine)   ? std::min(selEndWord,   numWords - 1) : numWords - 1;
+
+            for (int wi = wFirst; wi <= wLast && hlWordCount < MAX_HL_WORDS; wi++) {
+              HlWord& hw = hlWords[hlWordCount++];
+              hw.x = static_cast<int16_t>(pl->xPos + orientedMarginLeft + hlXpos[wi]);
+              hw.y = static_cast<int16_t>(pl->yPos + orientedMarginTop);
+              const auto& rawW = hlElWords[wi];
+              const int len = std::min(static_cast<int>(rawW.size()),
+                                       static_cast<int>(sizeof(hw.text)) - 1);
+              memcpy(hw.text, rawW.c_str(), len);
+              hw.text[len] = '\0';
+              hw.w = static_cast<int16_t>(renderer.getTextWidth(hlFontId, hw.text));
+            }
+          }
+          li++;
+        }
+      }
+    }
+
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
+
+    // Dict mode overlay: draw cursor or highlight range; draw popup only when visible
+    if (dictModeActive && dictCursor.valid) {
+      const int screenW = renderer.getScreenWidth();
+      const int screenH = renderer.getScreenHeight();
+      const int readerFontId = SETTINGS.getReaderFontId();
+
+      if (highlightModeActive && hlWordCount > 0) {
+        // Highlight range: invert every selected word (black bg, white text).
+        const int lineH = static_cast<int>(renderer.getLineHeight(readerFontId));
+        for (int i = 0; i < hlWordCount; i++) {
+          renderer.fillRect(hlWords[i].x, hlWords[i].y, hlWords[i].w, lineH, true);
+          renderer.drawText(readerFontId, hlWords[i].x, hlWords[i].y, hlWords[i].text, false);
+        }
+      } else if (!highlightModeActive) {
+        // Single cursor word inversion (normal dict mode).
+        renderer.fillRect(dictCursor.x, dictCursor.y, dictCursor.wordW, dictCursor.lineH, true);
+        renderer.drawText(readerFontId, dictCursor.x, dictCursor.y,
+                          dictCursor.displayWord.c_str(), false);
+      }
+
+      // Draw definition popup only after Confirm was pressed (not available in highlight mode)
+      if (!highlightModeActive && dictPopupVisible) {
+        constexpr int POPUP_PAD = 8;
+        constexpr int POPUP_MAX_LINES = 4;
+        const int lineH = renderer.getLineHeight(UI_12_FONT_ID) + 2;
+        const int popupH = POPUP_PAD * 2 + lineH * POPUP_MAX_LINES;
+        const int popupY = (dictCursor.y < screenH / 2) ? (screenH - popupH - 4) : 4;
+        renderer.fillRect(0, popupY, screenW, popupH, false);
+        renderer.drawRect(2, popupY + 2, screenW - 4, popupH - 4, true);
+        const char* defText = (dictDefinition[0] != '\0') ? dictDefinition : tr(STR_NO_DEFINITION);
+        // Wrap to a generous limit, then show a scrollable window of POPUP_MAX_LINES.
+        constexpr int POPUP_WRAP_MAX = 20;
+        const auto allLines = renderer.wrappedText(UI_12_FONT_ID, defText,
+                                                   screenW - POPUP_PAD * 2, POPUP_WRAP_MAX);
+        const int totalDefLines = static_cast<int>(allLines.size());
+        dictPopupTotalLines = totalDefLines;  // expose to loop() for boundary dict-switching
+        // Clamp scroll offset to a valid page boundary (always a multiple of POPUP_MAX_LINES).
+        // This handles the case where the definition changed (e.g. different dict) and the
+        // previous offset is past the last page.
+        if (totalDefLines > 0) {
+          const int lastPageStart = ((totalDefLines - 1) / POPUP_MAX_LINES) * POPUP_MAX_LINES;
+          if (dictPopupScrollOffset > lastPageStart) {
+            dictPopupScrollOffset = lastPageStart;
+          }
+        } else {
+          dictPopupScrollOffset = 0;
+        }
+        int lineY = popupY + POPUP_PAD;
+        const int startLine = dictPopupScrollOffset;
+        const int endLine = std::min(startLine + POPUP_MAX_LINES, totalDefLines);
+        for (int i = startLine; i < endLine; i++) {
+          renderer.drawText(UI_12_FONT_ID, POPUP_PAD, lineY, allLines[i].c_str(), true);
+          lineY += lineH;
+        }
+      }
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    }
   }
   silentIndexNextChapterIfNeeded(viewportWidth, viewportHeight);
   saveProgress(currentSpineIndex, section->currentPage, section->pageCount);
@@ -1172,6 +1611,89 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     pendingScreenshot = false;
     ScreenshotUtil::takeScreenshot(renderer);
   }
+}
+
+void EpubReaderActivity::saveHighlightToMyCLippings() {
+  if (!section || !epub) return;
+
+  auto p = section->loadPageFromSectionFile();
+  if (!p) return;
+
+  // Normalise selection bounds.
+  int selStartLine = highlightAnchorLineIdx;
+  int selStartWord = highlightAnchorWordIdx;
+  int selEndLine   = dictCursorLineIdx;
+  int selEndWord   = dictCursorWordIdx;
+  if (selEndLine < selStartLine ||
+      (selEndLine == selStartLine && selEndWord < selStartWord)) {
+    std::swap(selStartLine, selEndLine);
+    std::swap(selStartWord, selEndWord);
+  }
+
+  // Walk the page and concatenate selected words into a plain-text string.
+  std::string selectedText;
+  selectedText.reserve(256);
+  int li = 0;
+  bool prevHyphenated = false;
+  for (const auto& el : p->elements) {
+    if (el->getTag() != TAG_PageLine) continue;
+    if (li > selEndLine) break;
+    if (li >= selStartLine) {
+      const auto* pl = static_cast<const PageLine*>(el.get());
+      if (!pl->getBlock()) { li++; continue; }
+      const auto& words = pl->getBlock()->getWords();
+      const int numWords = static_cast<int>(words.size());
+      if (numWords == 0) { li++; continue; }
+
+      const int wFirst = (li == selStartLine) ? std::min(selStartWord, numWords - 1) : 0;
+      const int wLast  = (li == selEndLine)   ? std::min(selEndWord,   numWords - 1) : numWords - 1;
+
+      for (int wi = wFirst; wi <= wLast; wi++) {
+        const std::string& w = words[wi];
+        if (!selectedText.empty() && !prevHyphenated) selectedText += ' ';
+        prevHyphenated = false;
+        // Stitch hyphenated line breaks: last word on a non-final line ending with '-'.
+        if (wi == numWords - 1 && li < selEndLine && !w.empty() && w.back() == '-') {
+          selectedText += w.substr(0, w.size() - 1);
+          prevHyphenated = true;
+        } else {
+          selectedText += w;
+        }
+      }
+    }
+    li++;
+  }
+
+  if (selectedText.empty()) return;
+
+  // Compute book progress percentage.
+  float bookProgress = 0.0f;
+  if (epub->getBookSize() > 0 && section->pageCount > 0) {
+    const float chapterProgress =
+        static_cast<float>(section->currentPage) / static_cast<float>(section->pageCount);
+    bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
+  }
+  const int progressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
+
+  // Append a Kindle-style clipping entry to /MyClippings.txt.
+  FsFile file = Storage.open("/MyClippings.txt", O_WRITE | O_CREAT | O_APPEND);
+  if (!file) {
+    LOG_ERR("ERS", "saveHighlight: failed to open /MyClippings.txt");
+    return;
+  }
+  const std::string entry = std::string("==========\n") +
+                            epub->getTitle() + " (" + epub->getAuthor() + ")\n" +
+                            "- Your Highlight | Location: " + std::to_string(progressPercent) + "%\n\n" +
+                            selectedText + "\n\n";
+  file.write(entry.c_str(), entry.size());
+  file.close();
+
+  LOG_DBG("ERS", "Highlight saved: %d chars at %d%%", static_cast<int>(selectedText.size()), progressPercent);
+
+  // Brief confirmation popup.
+  GUI.drawPopup(renderer, tr(STR_HIGHLIGHT_SAVED));
+  renderer.displayBuffer();
+  delay(500);
 }
 
 void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportWidth, const uint16_t viewportHeight) {

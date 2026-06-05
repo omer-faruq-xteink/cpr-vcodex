@@ -8,6 +8,7 @@
 #include "BookmarkStore.h"
 #include "EpubReaderMenuActivity.h"
 #include "activities/Activity.h"
+#include "util/ButtonNavigator.h"
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
@@ -79,6 +80,25 @@ class EpubReaderActivity final : public Activity {
   void renderStatusBar() const;
   void silentIndexNextChapterIfNeeded(uint16_t viewportWidth, uint16_t viewportHeight);
   void saveProgress(int spineIndex, int currentPage, int pageCount);
+  // Dictionary cursor mode
+  bool dictModeActive = false;
+  bool dictPopupVisible = false;  // definition popup is showing
+  int dictCursorLineIdx = 0;
+  int dictCursorWordIdx = 0;
+  char dictDefinition[512] = {};
+  char dictLookedUpWord[256] = {};  // word that produced the current definition (set by render)
+  int dictPopupScrollOffset = 0;    // first visible line within the wrapped definition (page multiple)
+  int dictActiveDictIdx = 0;        // index within enabled-only dict list shown in popup
+  int dictPopupTotalLines = 0;      // total wrapped lines of current definition (set by render)
+  int dictCurrentLineWordCount = 999; // word count of cursor line (set each render, used by Right)
+  ButtonNavigator dictLineNav;  // Up/Down/PageBack/PageForward – line navigation
+  ButtonNavigator dictWordNav;  // Left/Right – word navigation
+
+  // Highlight / text-selection mode (activated by long-pressing Confirm while in dict mode)
+  bool highlightModeActive = false;
+  int highlightAnchorLineIdx = 0;
+  int highlightAnchorWordIdx = 0;
+
   // Jump to a percentage of the book (0-100), mapping it to spine and page.
   void jumpToPercent(int percent);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
@@ -91,6 +111,8 @@ class EpubReaderActivity final : public Activity {
   void markCurrentBookAsFinished();
   void pageTurn(bool isForwardTurn);
   void requestCurrentPageFullRefresh();
+
+  void saveHighlightToMyCLippings();
 
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
@@ -118,5 +140,7 @@ class EpubReaderActivity final : public Activity {
   void loop() override;
   void render(RenderLock&& lock) override;
   bool isReaderActivity() const override { return true; }
+  // Skip the 10ms loop delay while navigating dict/highlight cursor so input feels snappy.
+  bool skipLoopDelay() override { return dictModeActive && !dictPopupVisible; }
   ScreenshotInfo getScreenshotInfo() const override;
 };

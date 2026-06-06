@@ -404,15 +404,47 @@ static void addFallbackForms(const char* word, std::vector<std::string>& out) {
     if (!dup) out.push_back(v);
   }
 }
-// Matching rules (case-insensitive, ISO 639-1 prefix):
-//  - Either lang unknown (empty / <2 chars) → include (conservative)
-//  - dictLang looks like a natural name (no '-', length > 3) → include
-//    (e.g. "Turkish" — cannot reliably map to ISO code)
-//  - Otherwise compare only the FIRST token (source language) of dictLang
-//    against the first two chars of bookLang.
-//    e.g. "en-tr" → source="en", used for English books only.
-//         "tr-en" → source="tr", used for Turkish books.
-//         "tr"   → source="tr", used for Turkish books.
+// Extract the primary language subtag, lowercased, with common ISO 639-2
+// (three-letter) codes normalized to ISO 639-1 (two-letter).  Region/script
+// subtags are dropped.  e.g. "en-US" -> "en", "ENG" -> "en", "tur" -> "tr".
+// Returns a string that is NOT length 2 (e.g. a natural name like "turkish",
+// or an unmapped 3-letter code) when it cannot be reduced to a clean ISO 639-1
+// code; callers treat that as "unknown" and include conservatively.
+static std::string normalizePrimaryLang(const std::string& tag) {
+  std::string primary;
+  primary.reserve(tag.size());
+  for (char c : tag) {
+    if (c == '-' || c == '_') break;
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    primary.push_back(c);
+  }
+  // Normalize common ISO 639-2 three-letter codes to two-letter equivalents.
+  // Mirrors lib/Epub hyphenation's kIso639Mappings; extended with the few extra
+  // codes likely to appear in dc:language (notably "tur" for Turkish).
+  static constexpr struct {
+    const char* iso2;
+    const char* iso1;
+  } kIso639[] = {{"eng", "en"}, {"fra", "fr"}, {"fre", "fr"}, {"deu", "de"}, {"ger", "de"},
+                 {"rus", "ru"}, {"spa", "es"}, {"ita", "it"}, {"ukr", "uk"}, {"swe", "sv"},
+                 {"tur", "tr"}, {"nld", "nl"}, {"dut", "nl"}, {"por", "pt"}, {"ell", "el"},
+                 {"gre", "el"}, {"ara", "ar"}, {"jpn", "ja"}, {"zho", "zh"}, {"chi", "zh"}};
+  for (const auto& m : kIso639) {
+    if (primary == m.iso2) {
+      primary = m.iso1;
+      break;
+    }
+  }
+  return primary;
+}
+
+// Matching rules (conservative: when in doubt, include):
+//  - Book lang unknown (empty / single char) → no filter, try every dict.
+//  - Dict lang unknown (< 2 chars) → always try.
+//  - Compare only the FIRST (source) subtag of each, normalized to ISO 639-1.
+//    Both must reduce to a clean two-letter code, else include conservatively.
+//    e.g. "en-tr" source "en" used for English books ("en", "en-US", "eng").
+//         "tr"/"tr-en" source "tr" used for Turkish books ("tr", "tur").
+//         "Turkish" (natural name) / unmapped 3-letter codes → always tried.
 static bool dictLangMatchesBook(const std::string& dictLang, const char* bookLang) {
   if (bookLang == nullptr || bookLang[0] == '\0' || bookLang[1] == '\0') {
     return true;  // book lang unknown → no filter
@@ -421,24 +453,16 @@ static bool dictLangMatchesBook(const std::string& dictLang, const char* bookLan
     return true;  // dict lang unknown → always try
   }
 
-  const char bl0 = static_cast<char>(tolower(static_cast<unsigned char>(bookLang[0])));
-  const char bl1 = static_cast<char>(tolower(static_cast<unsigned char>(bookLang[1])));
+  const std::string bl = normalizePrimaryLang(bookLang);
+  const std::string dl = normalizePrimaryLang(dictLang);
 
-  // Natural-language name (e.g. "Turkish") — cannot parse → include.
-  const bool hasDelimiter = (dictLang.find('-') != std::string::npos);
-  if (!hasDelimiter && dictLang.size() > 3) {
+  // Only compare when BOTH reduced to a clean ISO 639-1 code.  Anything else
+  // (natural-language names, unmapped 3-letter codes) is treated as unknown and
+  // included — never wrongly excluded.
+  if (bl.size() != 2 || dl.size() != 2) {
     return true;
   }
-
-  // Only the first token (source language) must match.
-  const size_t end = dictLang.find('-');
-  const size_t tokenLen = (end == std::string::npos) ? dictLang.size() : end;
-  if (tokenLen < 2) {
-    return true;  // malformed → include
-  }
-  const char t0 = static_cast<char>(tolower(static_cast<unsigned char>(dictLang[0])));
-  const char t1 = static_cast<char>(tolower(static_cast<unsigned char>(dictLang[1])));
-  return (t0 == bl0 && t1 == bl1);
+  return bl == dl;
 }
 
 bool DictionaryStore::lookup(const char* word, char* definition, size_t maxLen,
@@ -524,10 +548,11 @@ bool DictionaryStore::lookup(const char* word, char* definition, size_t maxLen,
 // lookupInEnabledEntry / getEnabledEntryName / enabledCount
 // ---------------------------------------------------------------------------
 
-bool DictionaryStore::lookupInEnabledEntry(const int enabledIndex, const char* word,
-                                            char* definition, const size_t maxLen) const {
+DictionaryStore::LookupResult DictionaryStore::lookupInEnabledEntry(
+    const int enabledIndex, const char* word, char* definition, const size_t maxLen,
+    const char* bookLang) const {
   if (!word || !definition || maxLen == 0) {
-    return false;
+    return LookupResult::NotFound;
   }
   definition[0] = '\0';
 
@@ -539,9 +564,17 @@ bool DictionaryStore::lookupInEnabledEntry(const int enabledIndex, const char* w
       continue;
     }
 
+    // Dictionaries whose source language is incompatible with the book are not
+    // searched here; the caller may retry them in an unfiltered fallback pass.
+    if (!dictLangMatchesBook(entry.lang, bookLang)) {
+      LOG_DBG("DICT", "lookupInEnabledEntry[%d]: skipping '%s' (lang '%s' != book '%s')",
+              enabledIndex, entry.name.c_str(), entry.lang.c_str(), bookLang ? bookLang : "");
+      return LookupResult::SkippedLanguage;
+    }
+
     // Build candidate list: exact word first, then per-dict lookup order.
     StarDict sd;
-    if (!sd.open(entry.basePath)) return false;
+    if (!sd.open(entry.basePath)) return LookupResult::NotFound;
 
     const std::vector<uint32_t>* cp =
         entry.idxCheckpoints.empty() ? nullptr : &entry.idxCheckpoints;
@@ -551,7 +584,7 @@ bool DictionaryStore::lookupInEnabledEntry(const int enabledIndex, const char* w
       stripHtml(definition);
       LOG_DBG("DICT", "lookupInEnabledEntry[%d] '%s' found in '%s'",
               enabledIndex, word, entry.name.c_str());
-      return true;
+      return LookupResult::Found;
     }
 
     // 2. .syn alternate forms (language-independent)
@@ -562,7 +595,7 @@ bool DictionaryStore::lookupInEnabledEntry(const int enabledIndex, const char* w
           stripHtml(definition);
           LOG_DBG("DICT", "lookupInEnabledEntry[%d] '%s' (via .syn '%s') found in '%s'",
                   enabledIndex, word, canonical.c_str(), entry.name.c_str());
-          return true;
+          return LookupResult::Found;
         }
       }
     }
@@ -577,13 +610,13 @@ bool DictionaryStore::lookupInEnabledEntry(const int enabledIndex, const char* w
           stripHtml(definition);
           LOG_DBG("DICT", "lookupInEnabledEntry[%d] '%s' (via stem '%s') found in '%s'",
                   enabledIndex, word, stem.c_str(), entry.name.c_str());
-          return true;
+          return LookupResult::Found;
         }
       }
     }
-    return false;
+    return LookupResult::NotFound;
   }
-  return false;
+  return LookupResult::NotFound;
 }
 
 std::string DictionaryStore::getEnabledEntryName(const int enabledIndex) const {

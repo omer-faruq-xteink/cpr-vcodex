@@ -57,11 +57,20 @@ class DictionaryStore {
   bool lookup(const char* word, char* definition, size_t maxLen,
               const char* bookLang = nullptr) const;
 
+  // Outcome of a single-dict lookup. SkippedLanguage means the dict was NOT
+  // searched because its language is incompatible with the book — the caller can
+  // collect these and retry them in a second, unfiltered pass without
+  // re-searching the dicts already searched in the first pass.
+  enum class LookupResult { Found, NotFound, SkippedLanguage };
+
   // Look up in a specific dict identified by its index within the enabled-only
-  // list (0 = first enabled dict). No language filtering is applied.
-  // Returns true if a definition was found.
-  bool lookupInEnabledEntry(int enabledIndex, const char* word, char* definition,
-                             size_t maxLen) const;
+  // list (0 = first enabled dict).
+  // Optional bookLang (e.g. "tr", "en-US") filters by language: a dict whose
+  // source language is incompatible with the book is not searched and yields
+  // SkippedLanguage.  A dict with no lang info, or an unknown/empty bookLang,
+  // is always searched.
+  LookupResult lookupInEnabledEntry(int enabledIndex, const char* word, char* definition,
+                                    size_t maxLen, const char* bookLang = nullptr) const;
 
   // Human-readable name of the enabled dictionary at enabledIndex, or "" if
   // out of range.

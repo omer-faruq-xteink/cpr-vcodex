@@ -99,12 +99,14 @@ void DictionaryStore::scan() {
     entry.basePath = ifoPath;
     entry.name = sd.getName();
     entry.lang = sd.getLanguage();
+    entry.compressed = sd.isCompressed();
     // Do NOT load checkpoints here — enabled state is not yet known
     // (loadConfig() hasn't been called). Call syncCheckpointsToEnabled()
     // after loadConfig() to load checkpoints only for enabled dicts.
 
     const DictEntry* prev = findPrev(ifoPath);
-    entry.enabled = prev ? prev->enabled : true;
+    // Compressed dicts can never be enabled (no .dict file to read from).
+    entry.enabled = entry.compressed ? false : (prev ? prev->enabled : true);
 
     entries.push_back(std::move(entry));
     sd.close();
@@ -649,6 +651,9 @@ void DictionaryStore::setEnabled(size_t index, bool enabled) {
     return;
   }
   DictEntry& entry = entries[index];
+  if (entry.compressed) {
+    return;  // Cannot enable a compressed dictionary
+  }
   entry.enabled = enabled;
 
   // When enabling a dict, ensure its checkpoints are in RAM so the first

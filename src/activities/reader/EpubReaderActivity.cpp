@@ -401,7 +401,9 @@ void EpubReaderActivity::loop() {
               int prevIdx = dictActiveDictIdx - 1;
               char testDef[32];
               while (prevIdx >= 0 &&
-                     !DICT_STORE.lookupInEnabledEntry(prevIdx, dictLookedUpWord, testDef, sizeof(testDef))) {
+                     DICT_STORE.lookupInEnabledEntry(prevIdx, dictLookedUpWord, testDef, sizeof(testDef),
+                                                     epub->getLanguage().c_str()) !=
+                         DictionaryStore::LookupResult::Found) {
                 prevIdx--;
               }
               if (prevIdx >= 0) {
@@ -429,7 +431,9 @@ void EpubReaderActivity::loop() {
               int nextIdx = dictActiveDictIdx + 1;
               char testDef[32];
               while (nextIdx < DICT_STORE.enabledCount() &&
-                     !DICT_STORE.lookupInEnabledEntry(nextIdx, dictLookedUpWord, testDef, sizeof(testDef))) {
+                     DICT_STORE.lookupInEnabledEntry(nextIdx, dictLookedUpWord, testDef, sizeof(testDef),
+                                                     epub->getLanguage().c_str()) !=
+                         DictionaryStore::LookupResult::Found) {
                 nextIdx++;
               }
               if (nextIdx < DICT_STORE.enabledCount()) {
@@ -1492,19 +1496,40 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // Try dicts starting from dictActiveDictIdx; auto-advance to the first dict that has a hit
       // (restores the original fallback behaviour while still allowing manual dict switching).
       if (dictCursor.valid && dictPopupVisible && dictDefinition[0] == '\0') {
+        using LookupResult = DictionaryStore::LookupResult;
         const int numDicts = DICT_STORE.enabledCount();
+        const char* bookLang = epub->getLanguage().c_str();
         bool found = false;
-        for (int di = dictActiveDictIdx; di < numDicts; di++) {
-          if (DICT_STORE.lookupInEnabledEntry(di, dictCursor.word.c_str(),
-                                              dictDefinition, sizeof(dictDefinition))) {
-            dictActiveDictIdx = di;
-            // Save the word so loop() can search backward across dicts.
-            strncpy(dictLookedUpWord, dictCursor.word.c_str(), sizeof(dictLookedUpWord) - 1);
-            dictLookedUpWord[sizeof(dictLookedUpWord) - 1] = '\0';
-            found = true;
-            break;
+        auto acceptHit = [&](int di) {
+          dictActiveDictIdx = di;
+          // Save the word so loop() can search backward across dicts.
+          strncpy(dictLookedUpWord, dictCursor.word.c_str(), sizeof(dictLookedUpWord) - 1);
+          dictLookedUpWord[sizeof(dictLookedUpWord) - 1] = '\0';
+          found = true;
+        };
+
+        // Pass 1: prefer dictionaries whose language matches the book. Remember
+        // any dicts skipped for language so pass 2 can try them without
+        // re-searching the dicts already searched here.
+        std::vector<int> langSkipped;
+        for (int di = dictActiveDictIdx; di < numDicts && !found; di++) {
+          switch (DICT_STORE.lookupInEnabledEntry(di, dictCursor.word.c_str(), dictDefinition,
+                                                  sizeof(dictDefinition), bookLang)) {
+            case LookupResult::Found: acceptHit(di); break;
+            case LookupResult::SkippedLanguage: langSkipped.push_back(di); break;
+            case LookupResult::NotFound: break;
           }
         }
+
+        // Pass 2 (fallback): search only the language-skipped dicts, unfiltered.
+        for (size_t i = 0; i < langSkipped.size() && !found; i++) {
+          if (DICT_STORE.lookupInEnabledEntry(langSkipped[i], dictCursor.word.c_str(),
+                                              dictDefinition, sizeof(dictDefinition),
+                                              nullptr) == LookupResult::Found) {
+            acceptHit(langSkipped[i]);
+          }
+        }
+
         if (!found) {
           strncpy(dictDefinition, tr(STR_NO_DEFINITION), sizeof(dictDefinition) - 1);
           dictDefinition[sizeof(dictDefinition) - 1] = '\0';

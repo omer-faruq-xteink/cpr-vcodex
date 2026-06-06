@@ -14,7 +14,9 @@
 //   <base>.idx  – sorted binary index: word\0 + uint32_t offset (BE) + uint32_t size (BE)
 //   <base>.dict – raw definition text, addressed by offset+size pairs from .idx
 //
-// Only the ".dict" variant (uncompressed) is supported; ".dict.dz" is not.
+// Only the ".dict" variant (uncompressed) is supported for lookups. If only
+// ".dict.dz" is present, open() still succeeds but sets isCompressed()=true so
+// callers can inform the user that unzipping is required.
 //
 // Memory model: no full index is loaded into RAM.  A compact checkpoint array
 // (one uint32_t per ~4 KB of .idx) is built once (see buildCheckpoints()) and
@@ -37,6 +39,10 @@ class StarDict {
   void close();
 
   bool isOpen() const { return opened; }
+
+  // True when only a .dict.dz (compressed) file is present. The dictionary
+  // appears in the list but cannot be used until the user unzips it.
+  bool isCompressed() const { return compressed; }
 
   // Human-readable dictionary name from the .ifo bookname field.
   const std::string& getName() const { return bookName; }
@@ -93,6 +99,7 @@ class StarDict {
   uint32_t wordCount = 0;
   size_t idxFileSize = 0;
   bool opened = false;
+  bool compressed = false;
 
   // Parse one line from the .ifo text file and extract the value.
   static bool parseIfoField(const char* line, const char* key, std::string& out);

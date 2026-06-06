@@ -154,8 +154,14 @@ bool StarDict::open(const std::string& ifoPath) {
     return false;
   }
   if (!Storage.exists(dictPath.c_str())) {
-    LOG_ERR("SD", "StarDict: .dict not found: %s", dictPath.c_str());
-    return false;
+    const std::string dzPath = dictPath + ".dz";
+    if (Storage.exists(dzPath.c_str())) {
+      LOG_DBG("SD", "StarDict: .dict.dz detected (compressed), lookups disabled: %s", dzPath.c_str());
+      compressed = true;
+    } else {
+      LOG_ERR("SD", "StarDict: .dict not found: %s", dictPath.c_str());
+      return false;
+    }
   }
 
   // Verify idx file size if reported
@@ -198,6 +204,7 @@ void StarDict::close() {
   wordCount = 0;
   idxFileSize = 0;
   opened = false;
+  compressed = false;
 }
 
 // ---------------------------------------------------------------------------

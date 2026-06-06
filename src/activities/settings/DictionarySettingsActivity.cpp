@@ -6,6 +6,7 @@
 #include "DictionaryStore.h"
 #include "I18nKeys.h"
 #include "MappedInputManager.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/ButtonNavigator.h"
@@ -33,8 +34,17 @@ void DictionarySettingsActivity::loop() {
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     if (totalItems > 0) {
-      DICT_STORE.setEnabled(selectedIndex, !DICT_STORE.getEntries()[selectedIndex].enabled);
-      requestUpdate();
+      const auto& entry = DICT_STORE.getEntries()[selectedIndex];
+      if (entry.compressed) {
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput,
+                                                   "Cannot enable",
+                                                   "Unzip the .dict.dz file to a plain .dict file first (use 7-Zip)"),
+            [this](const ActivityResult&) { requestUpdate(); });
+      } else {
+        DICT_STORE.setEnabled(selectedIndex, !entry.enabled);
+        requestUpdate();
+      }
     }
     return;
   }
@@ -111,7 +121,10 @@ void DictionarySettingsActivity::render(RenderLock&&) {
     GUI.drawList(
         renderer, Rect{0, contentTop, pageWidth, contentHeight}, totalItems, selectedIndex,
         [&entries](int index) { return entries[index].name.c_str(); },
-        nullptr, nullptr,
+        [&entries](int index) -> std::string {
+          return entries[index].compressed ? "Unzip required" : "";
+        },
+        nullptr,
         [&entries](int index) { return entries[index].enabled ? "[ON]" : "[OFF]"; },
         true);
   }

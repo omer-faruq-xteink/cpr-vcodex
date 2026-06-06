@@ -23,6 +23,7 @@ struct DictEntry {
   std::string basePath;  // Absolute path of the .ifo file (identifies the dict)
   std::string lang;      // Language tag from .ifo (e.g. "tr", "en-tr", may be empty)
   bool enabled = true;
+  bool compressed = false;  // true when only .dict.dz exists; cannot be enabled
   mutable std::vector<uint32_t> idxCheckpoints;  // byte offsets, built by scan()
   mutable std::vector<uint32_t> idxOrdinals;     // ordinal counts at each checkpoint
 };

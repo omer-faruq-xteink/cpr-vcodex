@@ -28,6 +28,7 @@ enum class ShortcutId {
   OpdsBrowser,
 #if CPR_ENABLE_EXTRA_ACTIVITIES
   Sokoban,
+  Game2048,
 #endif
 };
 
@@ -42,7 +43,7 @@ struct ShortcutDefinition {
 };
 
 #if CPR_ENABLE_EXTRA_ACTIVITIES
-constexpr size_t kShortcutDefinitionCount = 17;
+constexpr size_t kShortcutDefinitionCount = 18;
 #else
 constexpr size_t kShortcutDefinitionCount = 16;
 #endif
@@ -104,6 +105,9 @@ inline const std::array<ShortcutDefinition, kShortcutDefinitionCount>& getShortc
       ShortcutDefinition{ShortcutId::Sokoban, StrId::STR_SOKOBAN, StrId::STR_SOKOBAN_APP_DESC, UIIcon::Image,
                          &CrossPointSettings::sokobanShortcut, &CrossPointSettings::sokobanShortcutOrder,
                          &CrossPointSettings::sokobanShortcutVisible},
+      ShortcutDefinition{ShortcutId::Game2048, StrId::STR_2048, StrId::STR_2048_APP_DESC, UIIcon::Image,
+                         &CrossPointSettings::game2048Shortcut, &CrossPointSettings::game2048ShortcutOrder,
+                         &CrossPointSettings::game2048ShortcutVisible},
 #endif
   };
 

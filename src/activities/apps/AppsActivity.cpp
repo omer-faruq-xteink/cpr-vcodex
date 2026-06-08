@@ -16,6 +16,7 @@
 #include "ScreenCleanActivity.h"
 #include "SleepAppActivity.h"
 #if CPR_ENABLE_EXTRA_ACTIVITIES
+#include "activities/extras/Game2048Activity.h"
 #include "activities/extras/SokobanActivity.h"
 #endif
 #include "SyncDayActivity.h"
@@ -204,6 +205,9 @@ void AppsActivity::openSelectedApp() {
 #if CPR_ENABLE_EXTRA_ACTIVITIES
     case ShortcutId::Sokoban:
       activity = std::make_unique<SokobanActivity>(renderer, mappedInput);
+      break;
+    case ShortcutId::Game2048:
+      activity = std::make_unique<Game2048Activity>(renderer, mappedInput);
       break;
 #endif
   }

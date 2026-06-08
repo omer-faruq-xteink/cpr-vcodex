@@ -530,6 +530,10 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
       clamp(doc["sokobanShortcut"] | s.sokobanShortcut, shortcutLocationCount, s.sokobanShortcut);
   s.sokobanShortcutOrder =
       clamp(doc["sokobanShortcutOrder"] | s.sokobanShortcutOrder, shortcutOrderCount, s.sokobanShortcutOrder);
+  s.game2048Shortcut =
+      clamp(doc["game2048Shortcut"] | s.game2048Shortcut, shortcutLocationCount, s.game2048Shortcut);
+  s.game2048ShortcutOrder =
+      clamp(doc["game2048ShortcutOrder"] | s.game2048ShortcutOrder, shortcutOrderCount, s.game2048ShortcutOrder);
 #endif
 
   s.browseFilesShortcutVisible =
@@ -584,6 +588,8 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
 #if CPR_ENABLE_EXTRA_ACTIVITIES
   s.sokobanShortcutVisible = clamp(doc["sokobanShortcutVisible"] | s.sokobanShortcutVisible, static_cast<uint8_t>(2),
                                    s.sokobanShortcutVisible);
+  s.game2048ShortcutVisible = clamp(doc["game2048ShortcutVisible"] | s.game2048ShortcutVisible,
+                                    static_cast<uint8_t>(2), s.game2048ShortcutVisible);
 #endif
 
   migrateLegacyStatsShortcut(s, doc, needsResave);
@@ -829,6 +835,8 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
 #if CPR_ENABLE_EXTRA_ACTIVITIES
   doc["sokobanShortcut"] = s.sokobanShortcut;
   doc["sokobanShortcutOrder"] = s.sokobanShortcutOrder;
+  doc["game2048Shortcut"] = s.game2048Shortcut;
+  doc["game2048ShortcutOrder"] = s.game2048ShortcutOrder;
 #endif
   doc["browseFilesShortcutVisible"] = s.browseFilesShortcutVisible;
   doc["syncDayShortcutVisible"] = s.syncDayShortcutVisible;
@@ -849,6 +857,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["opdsBrowserShortcutVisible"] = s.opdsBrowserShortcutVisible;
 #if CPR_ENABLE_EXTRA_ACTIVITIES
   doc["sokobanShortcutVisible"] = s.sokobanShortcutVisible;
+  doc["game2048ShortcutVisible"] = s.game2048ShortcutVisible;
 #endif
 
   return saveJsonDocumentToFile("CPS", path, doc);
@@ -1061,6 +1070,10 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
       clamp(doc["sokobanShortcut"] | s.sokobanShortcut, shortcutLocationCount, s.sokobanShortcut);
   s.sokobanShortcutOrder =
       clamp(doc["sokobanShortcutOrder"] | s.sokobanShortcutOrder, shortcutOrderCount, s.sokobanShortcutOrder);
+  s.game2048Shortcut =
+      clamp(doc["game2048Shortcut"] | s.game2048Shortcut, shortcutLocationCount, s.game2048Shortcut);
+  s.game2048ShortcutOrder =
+      clamp(doc["game2048ShortcutOrder"] | s.game2048ShortcutOrder, shortcutOrderCount, s.game2048ShortcutOrder);
 #endif
 
   s.browseFilesShortcutVisible =
@@ -1115,6 +1128,8 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
 #if CPR_ENABLE_EXTRA_ACTIVITIES
   s.sokobanShortcutVisible = clamp(doc["sokobanShortcutVisible"] | s.sokobanShortcutVisible, static_cast<uint8_t>(2),
                                    s.sokobanShortcutVisible);
+  s.game2048ShortcutVisible = clamp(doc["game2048ShortcutVisible"] | s.game2048ShortcutVisible,
+                                    static_cast<uint8_t>(2), s.game2048ShortcutVisible);
 #endif
 
   normalizeShortcutOrderSettings(s);

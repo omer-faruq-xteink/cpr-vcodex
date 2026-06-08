@@ -37,6 +37,7 @@
 #include "activities/apps/SleepAppActivity.h"
 #include "activities/apps/SyncDayActivity.h"
 #if CPR_ENABLE_EXTRA_ACTIVITIES
+#include "activities/extras/Game2048Activity.h"
 #include "activities/extras/SokobanActivity.h"
 #endif
 #include "activities/util/ConfirmationActivity.h"
@@ -1041,6 +1042,10 @@ void HomeActivity::loop() {
 #if CPR_ENABLE_EXTRA_ACTIVITIES
         case ShortcutId::Sokoban:
           startActivityForResult(std::make_unique<SokobanActivity>(renderer, mappedInput),
+                                 [this](const ActivityResult&) { requestFreshHomeRender(true); });
+          break;
+        case ShortcutId::Game2048:
+          startActivityForResult(std::make_unique<Game2048Activity>(renderer, mappedInput),
                                  [this](const ActivityResult&) { requestFreshHomeRender(true); });
           break;
 #endif

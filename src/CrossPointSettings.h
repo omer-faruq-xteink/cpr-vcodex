@@ -352,6 +352,8 @@ class CrossPointSettings {
 #if CPR_ENABLE_EXTRA_ACTIVITIES
   uint8_t sokobanShortcut = SHORTCUT_APPS;
   uint8_t sokobanShortcutOrder = 19;
+  uint8_t game2048Shortcut = SHORTCUT_APPS;
+  uint8_t game2048ShortcutOrder = 20;
 #endif
   uint8_t browseFilesShortcutVisible = 1;
   // Legacy Stats shortcut visibility retained for settings.json migration to readingStatsShortcut.
@@ -374,6 +376,7 @@ class CrossPointSettings {
   uint8_t opdsBrowserShortcutVisible = 1;
 #if CPR_ENABLE_EXTRA_ACTIVITIES
   uint8_t sokobanShortcutVisible = 1;
+  uint8_t game2048ShortcutVisible = 1;
 #endif
   // Sunlight fading compensation
   uint8_t fadingFix = 0;

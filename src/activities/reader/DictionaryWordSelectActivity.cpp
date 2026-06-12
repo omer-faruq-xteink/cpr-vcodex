@@ -1,12 +1,15 @@
 #include "DictionaryWordSelectActivity.h"
 
+#include <Esp.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <I18n.h>
+#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <climits>
 #include <cstdlib>
+#include <cstring>
 
 #include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
@@ -16,8 +19,21 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+constexpr uint32_t SELECTION_CACHE_HEAP_GUARD_BYTES = 48 * 1024;
+constexpr uint32_t SELECTION_CACHE_BLOCK_GUARD_BYTES = 8 * 1024;
+
+bool hasSelectionCacheHeadroom(const size_t bufferSize) {
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_DEFAULT);
+  return freeHeap > bufferSize + SELECTION_CACHE_HEAP_GUARD_BYTES &&
+         largestBlock > bufferSize + SELECTION_CACHE_BLOCK_GUARD_BYTES;
+}
+}  // namespace
+
 void DictionaryWordSelectActivity::onEnter() {
   Activity::onEnter();
+  invalidateBaseScreenBuffer();
   extractWords();
   mergeHyphenatedWords();
   if (!rows.empty()) {
@@ -25,6 +41,11 @@ void DictionaryWordSelectActivity::onEnter() {
     currentWordInRow = 0;
   }
   requestUpdate();
+}
+
+void DictionaryWordSelectActivity::onExit() {
+  freeBaseScreenBuffer();
+  Activity::onExit();
 }
 
 void DictionaryWordSelectActivity::extractWords() {
@@ -119,7 +140,7 @@ void DictionaryWordSelectActivity::moveRow(const int delta) {
     }
   }
   currentWordInRow = bestIndex;
-  requestUpdate();
+  updateSelectionHighlight();
 }
 
 void DictionaryWordSelectActivity::moveWord(const int delta) {
@@ -139,7 +160,102 @@ void DictionaryWordSelectActivity::moveWord(const int delta) {
     currentRow = (currentRow + 1) % rowCount;
     currentWordInRow = 0;
   }
+  updateSelectionHighlight();
+}
+
+void DictionaryWordSelectActivity::updateSelectionHighlight() {
+  if (redrawSelectionFast()) return;
   requestUpdate();
+}
+
+bool DictionaryWordSelectActivity::redrawSelectionFast() {
+  if (!baseScreenBufferStored) return false;
+
+  RenderLock lock(*this);
+  if (!restoreBaseScreenBuffer()) return false;
+
+  drawSelectionHighlight();
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  return true;
+}
+
+bool DictionaryWordSelectActivity::storeBaseScreenBuffer() {
+  uint8_t* frameBuffer = renderer.getFrameBuffer();
+  const size_t bufferSize = renderer.getBufferSize();
+  if (!frameBuffer || bufferSize == 0) {
+    invalidateBaseScreenBuffer();
+    return false;
+  }
+  if (!hasSelectionCacheHeadroom(bufferSize)) {
+    freeBaseScreenBuffer();
+    return false;
+  }
+
+  if (!baseScreenBuffer || baseScreenBufferSize != bufferSize) {
+    freeBaseScreenBuffer();
+    baseScreenBuffer = static_cast<uint8_t*>(malloc(bufferSize));
+    if (!baseScreenBuffer) {
+      return false;
+    }
+    baseScreenBufferSize = bufferSize;
+  }
+
+  memcpy(baseScreenBuffer, frameBuffer, bufferSize);
+  baseScreenBufferStored = true;
+  return true;
+}
+
+bool DictionaryWordSelectActivity::restoreBaseScreenBuffer() {
+  if (!baseScreenBufferStored || !baseScreenBuffer || baseScreenBufferSize != renderer.getBufferSize()) {
+    return false;
+  }
+
+  uint8_t* frameBuffer = renderer.getFrameBuffer();
+  if (!frameBuffer) {
+    return false;
+  }
+
+  memcpy(frameBuffer, baseScreenBuffer, baseScreenBufferSize);
+  return true;
+}
+
+void DictionaryWordSelectActivity::invalidateBaseScreenBuffer() { baseScreenBufferStored = false; }
+
+void DictionaryWordSelectActivity::freeBaseScreenBuffer() {
+  if (baseScreenBuffer) {
+    free(baseScreenBuffer);
+    baseScreenBuffer = nullptr;
+  }
+  baseScreenBufferSize = 0;
+  invalidateBaseScreenBuffer();
+}
+
+void DictionaryWordSelectActivity::drawSelectionHighlight() {
+  if (rows.empty() || currentRow < 0 || currentRow >= static_cast<int>(rows.size()) || currentWordInRow < 0 ||
+      currentWordInRow >= static_cast<int>(rows[currentRow].wordIndices.size())) {
+    return;
+  }
+
+  const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
+  const auto& word = words[wordIndex];
+  const int lineHeight = renderer.getLineHeight(readerFontId);
+  constexpr int highlightPaddingX = 2;
+  constexpr int highlightPaddingY = 1;
+  constexpr int highlightRadius = 3;
+
+  auto drawSelectedWord = [&](const WordInfo& selectedWord) {
+    renderer.fillRoundedRect(selectedWord.screenX - highlightPaddingX, selectedWord.screenY - highlightPaddingY,
+                             selectedWord.width + highlightPaddingX * 2, lineHeight + highlightPaddingY * 2,
+                             highlightRadius, Color::Black);
+    renderer.drawText(readerFontId, selectedWord.screenX, selectedWord.screenY, selectedWord.text.c_str(), false);
+  };
+
+  drawSelectedWord(word);
+
+  const int linkedIndex = word.continuationOf >= 0 ? word.continuationOf : word.continuationIndex;
+  if (linkedIndex >= 0 && linkedIndex != wordIndex && linkedIndex < static_cast<int>(words.size())) {
+    drawSelectedWord(words[linkedIndex]);
+  }
 }
 
 void DictionaryWordSelectActivity::lookupSelectedWord() {
@@ -147,6 +263,7 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
   const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
   const std::string query = words[wordIndex].lookupText.empty() ? DictionaryStore::cleanWord(words[wordIndex].text)
                                                                 : words[wordIndex].lookupText;
+  freeBaseScreenBuffer();
   if (query.empty()) {
     GUI.drawPopup(renderer, tr(STR_LOOKUP_EMPTY_PAGE));
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -249,30 +366,7 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
     page->render(renderer, readerFontId, marginLeft, marginTop, SETTINGS.bionicReading);
   }
 
-  if (!rows.empty() && currentRow >= 0 && currentRow < static_cast<int>(rows.size()) &&
-      currentWordInRow >= 0 && currentWordInRow < static_cast<int>(rows[currentRow].wordIndices.size())) {
-    const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
-    const auto& word = words[wordIndex];
-    const int lineHeight = renderer.getLineHeight(readerFontId);
-    constexpr int highlightPaddingX = 2;
-    constexpr int highlightPaddingY = 1;
-    constexpr int highlightRadius = 3;
-
-    auto drawSelectedWord = [&](const WordInfo& selectedWord) {
-      renderer.fillRoundedRect(selectedWord.screenX - highlightPaddingX, selectedWord.screenY - highlightPaddingY,
-                               selectedWord.width + highlightPaddingX * 2, lineHeight + highlightPaddingY * 2,
-                               highlightRadius, Color::Black);
-      renderer.drawText(readerFontId, selectedWord.screenX, selectedWord.screenY, selectedWord.text.c_str(), false);
-    };
-
-    drawSelectedWord(word);
-
-    const int linkedIndex = word.continuationOf >= 0 ? word.continuationOf : word.continuationIndex;
-    if (linkedIndex >= 0 && linkedIndex != wordIndex && linkedIndex < static_cast<int>(words.size())) {
-      const auto& linked = words[linkedIndex];
-      drawSelectedWord(linked);
-    }
-  } else {
+  if (rows.empty()) {
     renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2, tr(STR_LOOKUP_EMPTY_PAGE));
   }
 
@@ -293,5 +387,8 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+
+  storeBaseScreenBuffer();
+  drawSelectionHighlight();
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }

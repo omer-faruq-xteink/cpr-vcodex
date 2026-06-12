@@ -30,7 +30,7 @@ LanguageHyphenator spanishHyphenator(es_patterns, isLatinLetter, toLowerLatin);
 LanguageHyphenator italianHyphenator(it_patterns, isLatinLetter, toLowerLatin);
 LanguageHyphenator polishHyphenator(pl_patterns, isLatinLetter, toLowerLatin);
 LanguageHyphenator swedishHyphenator(sv_patterns, isLatinLetter, toLowerLatin);
-LanguageHyphenator turkishHyphenator(tr_patterns, isLatinLetter, toLowerLatin);
+LanguageHyphenator turkishHyphenator(tr_patterns, isLatinLetter, toLowerTurkish);
 LanguageHyphenator ukrainianHyphenator(uk_patterns, isCyrillicLetter, toLowerCyrillic);
 
 static const LanguageEntry kEntries[] = {

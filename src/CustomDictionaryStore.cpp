@@ -1,4 +1,4 @@
-#include "DictionaryStore.h"
+#include "CustomDictionaryStore.h"
 
 #include <ArduinoJson.h>
 #include <FsHelpers.h>
@@ -13,18 +13,18 @@
 #include <utility>
 #include <vector>
 
-DictionaryStore DictionaryStore::instance;
+CustomDictionaryStore CustomDictionaryStore::instance;
 
-constexpr char DictionaryStore::CONFIG_PATH[];
-constexpr char DictionaryStore::DICT_ROOT[];
+constexpr char CustomDictionaryStore::CONFIG_PATH[];
+constexpr char CustomDictionaryStore::DICT_ROOT[];
 
-DictionaryStore& DictionaryStore::getInstance() { return instance; }
+CustomDictionaryStore& CustomDictionaryStore::getInstance() { return instance; }
 
 // ---------------------------------------------------------------------------
 // scan()
 // ---------------------------------------------------------------------------
 
-void DictionaryStore::scan() {
+void CustomDictionaryStore::scan() {
   // Keep existing entries so we can preserve enabled/order for known dicts.
   std::vector<DictEntry> previous = std::move(entries);
   entries.clear();
@@ -133,7 +133,7 @@ void DictionaryStore::scan() {
 // saveConfig / loadConfig
 // ---------------------------------------------------------------------------
 
-bool DictionaryStore::saveConfig() const {
+bool CustomDictionaryStore::saveConfig() const {
   Storage.mkdir("/.crosspoint");
 
   JsonDocument doc;
@@ -165,7 +165,7 @@ bool DictionaryStore::saveConfig() const {
   return true;
 }
 
-bool DictionaryStore::loadConfig() {
+bool CustomDictionaryStore::loadConfig() {
   if (!Storage.exists(CONFIG_PATH)) {
     return false;
   }
@@ -465,7 +465,7 @@ static bool dictLangMatchesBook(const std::string& dictLang, const char* bookLan
   return bl == dl;
 }
 
-bool DictionaryStore::lookup(const char* word, char* definition, size_t maxLen,
+bool CustomDictionaryStore::lookup(const char* word, char* definition, size_t maxLen,
                              const char* bookLang) const {
   if (!word || !definition || maxLen == 0) {
     return false;
@@ -548,7 +548,7 @@ bool DictionaryStore::lookup(const char* word, char* definition, size_t maxLen,
 // lookupInEnabledEntry / getEnabledEntryName / enabledCount
 // ---------------------------------------------------------------------------
 
-DictionaryStore::LookupResult DictionaryStore::lookupInEnabledEntry(
+CustomDictionaryStore::LookupResult CustomDictionaryStore::lookupInEnabledEntry(
     const int enabledIndex, const char* word, char* definition, const size_t maxLen,
     const char* bookLang) const {
   if (!word || !definition || maxLen == 0) {
@@ -619,7 +619,7 @@ DictionaryStore::LookupResult DictionaryStore::lookupInEnabledEntry(
   return LookupResult::NotFound;
 }
 
-std::string DictionaryStore::getEnabledEntryName(const int enabledIndex) const {
+std::string CustomDictionaryStore::getEnabledEntryName(const int enabledIndex) const {
   int ci = 0;
   for (const auto& entry : entries) {
     if (!entry.enabled) continue;
@@ -629,7 +629,7 @@ std::string DictionaryStore::getEnabledEntryName(const int enabledIndex) const {
   return {};
 }
 
-int DictionaryStore::enabledCount() const {
+int CustomDictionaryStore::enabledCount() const {
   int c = 0;
   for (const auto& entry : entries) {
     if (entry.enabled) c++;
@@ -641,7 +641,7 @@ int DictionaryStore::enabledCount() const {
 // syncCheckpointsToEnabled / moveUp / moveDown / setEnabled
 // ---------------------------------------------------------------------------
 
-void DictionaryStore::syncCheckpointsToEnabled() {
+void CustomDictionaryStore::syncCheckpointsToEnabled() {
   for (auto& entry : entries) {
     if (!entry.enabled) {
       // Free RAM for disabled dicts.
@@ -665,21 +665,21 @@ void DictionaryStore::syncCheckpointsToEnabled() {
   }
 }
 
-void DictionaryStore::moveUp(size_t index) {
+void CustomDictionaryStore::moveUp(size_t index) {
   if (index == 0 || index >= entries.size()) {
     return;
   }
   std::swap(entries[index], entries[index - 1]);
 }
 
-void DictionaryStore::moveDown(size_t index) {
+void CustomDictionaryStore::moveDown(size_t index) {
   if (index + 1 >= entries.size()) {
     return;
   }
   std::swap(entries[index], entries[index + 1]);
 }
 
-void DictionaryStore::setEnabled(size_t index, bool enabled) {
+void CustomDictionaryStore::setEnabled(size_t index, bool enabled) {
   if (index >= entries.size()) {
     return;
   }

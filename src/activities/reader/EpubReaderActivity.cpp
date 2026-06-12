@@ -14,7 +14,7 @@
 #include <limits>
 
 #include "AchievementsStore.h"
-#include "DictionaryStore.h"
+#include "CustomDictionaryStore.h"
 #include "BookmarksActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -403,7 +403,7 @@ void EpubReaderActivity::loop() {
               while (prevIdx >= 0 &&
                      DICT_STORE.lookupInEnabledEntry(prevIdx, dictLookedUpWord, testDef, sizeof(testDef),
                                                      epub->getLanguage().c_str()) !=
-                         DictionaryStore::LookupResult::Found) {
+                         CustomDictionaryStore::LookupResult::Found) {
                 prevIdx--;
               }
               if (prevIdx >= 0) {
@@ -433,7 +433,7 @@ void EpubReaderActivity::loop() {
               while (nextIdx < DICT_STORE.enabledCount() &&
                      DICT_STORE.lookupInEnabledEntry(nextIdx, dictLookedUpWord, testDef, sizeof(testDef),
                                                      epub->getLanguage().c_str()) !=
-                         DictionaryStore::LookupResult::Found) {
+                         CustomDictionaryStore::LookupResult::Found) {
                 nextIdx++;
               }
               if (nextIdx < DICT_STORE.enabledCount()) {
@@ -1569,7 +1569,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // Try dicts starting from dictActiveDictIdx; auto-advance to the first dict that has a hit
       // (restores the original fallback behaviour while still allowing manual dict switching).
       if (dictCursor.valid && dictPopupVisible && dictDefinition[0] == '\0') {
-        using LookupResult = DictionaryStore::LookupResult;
+        using LookupResult = CustomDictionaryStore::LookupResult;
         const int numDicts = DICT_STORE.enabledCount();
         const char* bookLang = epub->getLanguage().c_str();
         bool found = false;

@@ -21,7 +21,7 @@
 // Memory model: no full index is loaded into RAM.  A compact checkpoint array
 // (one uint32_t per ~4 KB of .idx) is built once (see buildCheckpoints()) and
 // used to narrow each lookup to a bounded linear scan.  Build checkpoints in
-// DictionaryStore::scan() and pass them to every lookup() call.
+// CustomDictionaryStore::scan() and pass them to every lookup() call.
 
 class StarDict {
  public:

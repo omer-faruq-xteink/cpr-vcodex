@@ -3,7 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
-#include "DictionaryStore.h"
+#include "CustomDictionaryStore.h"
 #include "I18nKeys.h"
 #include "MappedInputManager.h"
 #include "activities/util/ConfirmationActivity.h"

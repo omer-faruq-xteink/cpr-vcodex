@@ -4,8 +4,9 @@
 #include <string>
 #include <vector>
 
-// DictionaryStore manages StarDict dictionaries placed on the SD card under
-// /dictionaries/   (each dictionary lives in its own sub-folder or directly).
+// CustomDictionaryStore manages StarDict dictionaries placed on the SD card
+// under /dictionaries/ (each dictionary lives in its own sub-folder or
+// directly).
 //
 // Usage flow:
 //  1. Call scan() once after the SD card is mounted (e.g. at boot or on demand).
@@ -28,9 +29,9 @@ struct DictEntry {
   mutable std::vector<uint32_t> idxOrdinals;     // ordinal counts at each checkpoint
 };
 
-class DictionaryStore {
+class CustomDictionaryStore {
  public:
-  static DictionaryStore& getInstance();
+  static CustomDictionaryStore& getInstance();
 
   // Scan /dictionaries/ for .ifo files and populate the internal list.
   // Existing enabled/order state from a prior loadConfig() is preserved for
@@ -93,13 +94,13 @@ class DictionaryStore {
   size_t count() const { return entries.size(); }
 
  private:
-  DictionaryStore() = default;
+  CustomDictionaryStore() = default;
 
-  static DictionaryStore instance;
+  static CustomDictionaryStore instance;
   std::vector<DictEntry> entries;
 
   static constexpr char CONFIG_PATH[] = "/.crosspoint/dict_config.json";
   static constexpr char DICT_ROOT[] = "/dictionaries";
 };
 
-#define DICT_STORE DictionaryStore::getInstance()
+#define DICT_STORE CustomDictionaryStore::getInstance()

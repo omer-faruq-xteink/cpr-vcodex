@@ -21,6 +21,8 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
+#include "DictionaryHistoryActivity.h"
+#include "DictionaryWordSelectActivity.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
@@ -30,6 +32,7 @@
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontGlobals.h"
+#include "activities/apps/DictionaryActivity.h"
 #include "activities/apps/ReadingStatsDetailActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
@@ -713,6 +716,28 @@ void EpubReaderActivity::requestCurrentPageFullRefresh() {
   requestUpdate();
 }
 
+std::shared_ptr<Page> EpubReaderActivity::loadCurrentPageForOverlay(int& outMarginLeft, int& outMarginTop) {
+  outMarginLeft = 0;
+  outMarginTop = 0;
+  if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) {
+    return nullptr;
+  }
+
+  int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
+  renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
+                                   &orientedMarginLeft);
+  orientedMarginTop += SETTINGS.screenMargin;
+  orientedMarginLeft += SETTINGS.screenMargin;
+  outMarginLeft = orientedMarginLeft;
+  outMarginTop = orientedMarginTop;
+
+  auto page = section->loadPageFromSectionFile();
+  if (!page) {
+    return nullptr;
+  }
+  return std::shared_ptr<Page>(std::move(page));
+}
+
 void EpubReaderActivity::saveCurrentPageBookmark() {
   if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) {
     requestUpdate();
@@ -939,6 +964,51 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                                  navigateToHref(footnoteResult.href, true);
                                }
                                requestUpdate();
+      });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::LOOK_UP_WORD: {
+      int overlayMarginLeft = 0;
+      int overlayMarginTop = 0;
+      auto page = loadCurrentPageForOverlay(overlayMarginLeft, overlayMarginTop);
+      if (!page) {
+        requestUpdate();
+        break;
+      }
+      READING_STATS.noteActivity();
+      startActivityForResult(std::make_unique<DictionaryWordSelectActivity>(
+                                 renderer, mappedInput, page, SETTINGS.getReaderFontId(), overlayMarginLeft,
+                                 overlayMarginTop),
+                             [this](const ActivityResult&) {
+                               READING_STATS.resumeSession();
+                               requestCurrentPageFullRefresh();
+                             });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::LOOKUP_HISTORY: {
+      int overlayMarginLeft = 0;
+      int overlayMarginTop = 0;
+      auto page = loadCurrentPageForOverlay(overlayMarginLeft, overlayMarginTop);
+      if (!page) {
+        requestUpdate();
+        break;
+      }
+      READING_STATS.noteActivity();
+      startActivityForResult(std::make_unique<DictionaryHistoryActivity>(
+                                 renderer, mappedInput, page, SETTINGS.getReaderFontId(), overlayMarginLeft,
+                                 overlayMarginTop),
+                             [this](const ActivityResult&) {
+                               READING_STATS.resumeSession();
+                               requestCurrentPageFullRefresh();
+                             });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::DICTIONARY: {
+      READING_STATS.noteActivity();
+      startActivityForResult(std::make_unique<DictionaryActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               READING_STATS.resumeSession();
+                               requestCurrentPageFullRefresh();
                              });
       break;
     }

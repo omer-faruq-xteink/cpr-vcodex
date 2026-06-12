@@ -1201,8 +1201,45 @@ void CrossPointWebServer::handleDownload() const {
   server->setContentLength(fileSize);
   server->send(200, contentType.c_str(), "");
 
+  NetworkClient client = server->client();
+  constexpr size_t chunkSize = 2048;
+  uint8_t buffer[chunkSize];
+  size_t sent = 0;
+
   file.seekSet(0);
-  const size_t sent = server->client().write(file);
+  while (sent < fileSize && client.connected()) {
+    esp_task_wdt_reset();
+    const size_t remaining = fileSize - sent;
+    const size_t toRead = std::min(chunkSize, remaining);
+    const int bytesRead = file.read(buffer, toRead);
+    if (bytesRead <= 0) {
+      break;
+    }
+
+    size_t writtenForChunk = 0;
+    uint8_t zeroWriteRetries = 0;
+    while (writtenForChunk < static_cast<size_t>(bytesRead) && client.connected()) {
+      esp_task_wdt_reset();
+      const size_t wrote =
+          client.write(buffer + writtenForChunk, static_cast<size_t>(bytesRead) - writtenForChunk);
+      if (wrote == 0) {
+        if (++zeroWriteRetries >= 5) {
+          break;
+        }
+        delay(2);
+        continue;
+      }
+      zeroWriteRetries = 0;
+      writtenForChunk += wrote;
+    }
+
+    sent += writtenForChunk;
+    if (writtenForChunk != static_cast<size_t>(bytesRead)) {
+      break;
+    }
+    yield();
+  }
+
   if (sent != fileSize) {
     LOG_ERR("WEB", "Download size mismatch for %s: sent %u of %u bytes", itemPath.c_str(), (unsigned)sent,
             (unsigned)fileSize);

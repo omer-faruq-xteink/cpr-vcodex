@@ -22,6 +22,7 @@ enum class ShortcutId {
   Bookmarks,
   Favorites,
   Flashcards,
+  Dictionary,
   FileTransfer,
   ScreenClean,
   Sleep,
@@ -43,9 +44,9 @@ struct ShortcutDefinition {
 };
 
 #if CPR_ENABLE_EXTRA_ACTIVITIES
-constexpr size_t kShortcutDefinitionCount = 18;
+constexpr size_t kShortcutDefinitionCount = 19;
 #else
-constexpr size_t kShortcutDefinitionCount = 16;
+constexpr size_t kShortcutDefinitionCount = 17;
 #endif
 
 inline const std::array<ShortcutDefinition, kShortcutDefinitionCount>& getShortcutDefinitions() {
@@ -88,6 +89,9 @@ inline const std::array<ShortcutDefinition, kShortcutDefinitionCount>& getShortc
       ShortcutDefinition{ShortcutId::Flashcards, StrId::STR_FLASHCARDS, StrId::STR_FLASHCARDS_APP_DESC, UIIcon::Text,
                          &CrossPointSettings::flashcardsShortcut, &CrossPointSettings::flashcardsShortcutOrder,
                          &CrossPointSettings::flashcardsShortcutVisible},
+      ShortcutDefinition{ShortcutId::Dictionary, StrId::STR_DICTIONARY, StrId::STR_DICTIONARY_APP_DESC, UIIcon::Text,
+                         &CrossPointSettings::dictionaryShortcut, &CrossPointSettings::dictionaryShortcutOrder,
+                         &CrossPointSettings::dictionaryShortcutVisible},
       ShortcutDefinition{ShortcutId::FileTransfer, StrId::STR_FILE_TRANSFER, StrId::STR_FILE_TRANSFER_APP_DESC,
                          UIIcon::Transfer, &CrossPointSettings::fileTransferShortcut,
                          &CrossPointSettings::fileTransferShortcutOrder, &CrossPointSettings::fileTransferShortcutVisible},

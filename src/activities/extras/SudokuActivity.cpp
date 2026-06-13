@@ -52,8 +52,8 @@ void writeProgressFile(const std::string& bankPath, int index, const std::string
 }  // namespace
 
 void SudokuActivity::scanBanks() {
-  bankPaths = SudokuPuzzleBank::listBankPaths(banksDir);
-  bankSelectorIndex = std::min(bankSelectorIndex, bankPaths.empty() ? size_t{0} : bankPaths.size() - 1);
+  bankEntries = SudokuPuzzleBank::listBanks(banksDir);
+  bankSelectorIndex = std::min(bankSelectorIndex, bankEntries.empty() ? size_t{0} : bankEntries.size() - 1);
 }
 
 void SudokuActivity::loadProgress() {
@@ -62,10 +62,11 @@ void SudokuActivity::loadProgress() {
   std::string savedBoard;
   if (!readProgressFile(savedBankPath, savedIndex, savedBoard)) return;
 
-  for (size_t i = 0; i < bankPaths.size(); i++) {
-    if (bankPaths[i] == savedBankPath) {
+  for (size_t i = 0; i < bankEntries.size(); i++) {
+    if (bankEntries[i].path == savedBankPath) {
       bankSelectorIndex = i;
-      if (bank.open(savedBankPath) && loadPuzzleAt(savedIndex)) {
+      if (bank.open(savedBankPath, bankEntries[i].format) && loadPuzzleAt(savedIndex)) {
+        currentBankDisplayName = bankEntries[i].displayName;
         game.applySavedBoard(savedBoard);
       }
       return;
@@ -92,11 +93,12 @@ void SudokuActivity::saveProgress() const {
   writeProgressFile(bank.path(), puzzleIndex, game.toBoardString());
 }
 
-bool SudokuActivity::openBank(const std::string& path) {
-  if (!bank.open(path)) {
+bool SudokuActivity::openBank(const SudokuPuzzleBank::Entry& entry) {
+  if (!bank.open(entry.path, entry.format)) {
     showTransientMessage(tr(STR_SUDOKU_LOAD_ERROR));
     return false;
   }
+  currentBankDisplayName = entry.displayName;
   startRandomPuzzle();
   return puzzleLoaded;
 }
@@ -191,10 +193,10 @@ void SudokuActivity::loop() {
     }
 
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      if (!bankPaths.empty()) {
-        const std::string& path = bankPaths[bankSelectorIndex];
-        if (openBank(path)) {
-          resumeSavedPuzzle(path);
+      if (!bankEntries.empty()) {
+        const SudokuPuzzleBank::Entry& entry = bankEntries[bankSelectorIndex];
+        if (openBank(entry)) {
+          resumeSavedPuzzle(entry.path);
           mode = Mode::Playing;
           renderer.requestNextFullRefresh();
           requestUpdate(true);
@@ -203,7 +205,7 @@ void SudokuActivity::loop() {
       return;
     }
 
-    const int listSize = static_cast<int>(bankPaths.size());
+    const int listSize = static_cast<int>(bankEntries.size());
     buttonNavigator.onNextRelease([this, listSize] {
       bankSelectorIndex = ButtonNavigator::nextIndex(static_cast<int>(bankSelectorIndex), listSize);
       requestUpdate();
@@ -312,20 +314,20 @@ void SudokuActivity::renderBankSelect() {
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
-  if (bankPaths.empty()) {
+  if (bankEntries.empty()) {
     renderer.drawCenteredText(UI_10_FONT_ID, contentTop + contentHeight / 2, tr(STR_SUDOKU_NO_BANKS));
   } else {
     GUI.drawList(
-        renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(bankPaths.size()),
+        renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(bankEntries.size()),
         static_cast<int>(bankSelectorIndex),
-        [this](const int index) { return SudokuPuzzleBank::displayNameFromPath(bankPaths[index]); });
+        [this](const int index) { return bankEntries[index].displayName; });
   }
 
   if (!transientMessage.empty() && millis() < transientUntilMs) {
     renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - metrics.buttonHintsHeight - 18, transientMessage.c_str());
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), bankPaths.empty() ? "" : tr(STR_OPEN), "", "");
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), bankEntries.empty() ? "" : tr(STR_OPEN), "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }
@@ -337,9 +339,8 @@ void SudokuActivity::renderPlaying() {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  const std::string bankName = SudokuPuzzleBank::displayNameFromPath(bank.path());
   const std::string subtitle = std::string(tr(STR_SUDOKU_REMAINING)) + ": " + std::to_string(game.remainingCells());
-  HeaderDateUtils::drawHeaderWithDate(renderer, bankName.c_str(), subtitle.c_str());
+  HeaderDateUtils::drawHeaderWithDate(renderer, currentBankDisplayName.c_str(), subtitle.c_str());
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;

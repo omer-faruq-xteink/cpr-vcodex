@@ -4,30 +4,47 @@
 #include <string>
 #include <vector>
 
-// Reads Sudoku puzzle banks straight from the SD card (e.g.
-// /sudoku/easy.txt) without any preprocessing. The on-disk format is the
-// public-domain "sudoku-exchange" layout: one fixed-width record per line,
+// Reads Sudoku puzzle banks from format-named subfolders of /sudoku, so the
+// loader knows how a file is laid out from its folder name alone:
 //
-//     <12-char id> <81 puzzle digits> <rating>\n
+//   /sudoku/sudoku-exchange-puzzle-bank/*.txt|*.csv
+//       "<12-char id> <81 puzzle digits> <rating>" per line (grantm's
+//       sudoku-exchange-puzzle-bank layout).
+//   /sudoku/line81/*.txt|*.csv
+//       One 81-character puzzle per line ('0'/'.'/'-' for blanks). Leading
+//       "#"-style comment lines are tolerated.
+//   /sudoku/kaggle-csv/*.txt|*.csv
+//       "<81-digit puzzle>,<81-digit solution>" per line (the solution
+//       column is optional); a non-puzzle header row such as
+//       "quizzes,solutions" is skipped automatically.
 //
-// where the puzzle digits use '1'-'9' for givens and '0'/'.' for blanks.
-// Plain "81 digits per line" files are also accepted.
-//
-// Because every record is the same length, there is no need to index the
-// whole file (a bank can hold hundreds of thousands of puzzles, far too many
-// to keep an offset table for in the ESP32-C3's RAM). open() measures the
-// stride from the first line, then loadPuzzle() seeks straight to
-// index * stride and reads a single record -- O(1) time and effectively zero
-// extra RAM, which is the whole reason the files can be used as-is.
+// In every format, the on-disk files are used exactly as downloaded -- no
+// conversion or preprocessing. loadPuzzle() relies on every data record
+// having the same byte width: open() measures the stride from the first
+// record that parses for the bank's format (skipping any leading
+// header/comment lines), so a bank can hold hundreds of thousands of puzzles
+// without an in-memory offset table -- loadPuzzle(index) seeks straight to
+// headerBytes + index * stride and reads a single record -- O(1) time and
+// effectively zero extra RAM.
 class SudokuPuzzleBank {
  public:
-  // Scans the SD card directory for .txt puzzle banks.
-  static std::vector<std::string> listBankPaths(const std::string& directory);
+  enum class Format {
+    SudokuExchange,
+    Line81,
+    KaggleCsv,
+  };
 
-  // Builds a display name from a bank file path (file name without extension).
-  static std::string displayNameFromPath(const std::string& path);
+  // One puzzle file found while scanning /sudoku's format subfolders.
+  struct Entry {
+    std::string path;
+    Format format;
+    std::string displayName;  // "<format-folder>/<file name without extension>"
+  };
 
-  bool open(const std::string& path);
+  // Scans the known format subfolders of `sudokuDir` for puzzle files.
+  static std::vector<Entry> listBanks(const std::string& sudokuDir);
+
+  bool open(const std::string& path, Format format);
   void close();
 
   bool isOpen() const { return puzzleCount_ > 0; }
@@ -40,6 +57,8 @@ class SudokuPuzzleBank {
 
  private:
   std::string path_;
-  uint32_t stride_ = 0;     // bytes from the start of one record to the next
+  Format format_ = Format::SudokuExchange;
+  uint32_t headerBytes_ = 0;  // bytes to skip before the first record
+  uint32_t stride_ = 0;       // bytes from the start of one record to the next
   int puzzleCount_ = 0;
 };

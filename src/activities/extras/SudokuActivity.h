@@ -8,13 +8,14 @@
 #include "SudokuPuzzleBank.h"
 #include "util/ButtonNavigator.h"
 
-// Minimal Sudoku puzzle activity. Reads fixed-width puzzle banks from the SD
-// card (see SudokuPuzzleBank), draws the 9x9 grid with plain digits and rules
-// (see SudokuBoardRenderer), and tracks only the bare minimum of progress:
-// which bank, which puzzle, and the player's current board so a half-finished
-// puzzle can be resumed. There is no solver -- completion and the optional
-// mistake-marking are derived purely from the Sudoku constraints. Entirely
-// compiled out unless CPR_ENABLE_EXTRA_ACTIVITIES is enabled.
+// Minimal Sudoku puzzle activity. Reads fixed-width puzzle banks from
+// format-named subfolders of the SD card (see SudokuPuzzleBank), draws the
+// 9x9 grid with plain digits and rules (see SudokuBoardRenderer), and tracks
+// only the bare minimum of progress: which bank, which puzzle, and the
+// player's current board so a half-finished puzzle can be resumed. There is
+// no solver -- completion and the optional mistake-marking are derived purely
+// from the Sudoku constraints. Entirely compiled out unless
+// CPR_ENABLE_EXTRA_ACTIVITIES is enabled.
 class SudokuActivity final : public Activity {
   enum class Mode {
     BankSelect,
@@ -36,11 +37,12 @@ class SudokuActivity final : public Activity {
   std::string banksDir;
 
   Mode mode = Mode::BankSelect;
-  std::vector<std::string> bankPaths;
+  std::vector<SudokuPuzzleBank::Entry> bankEntries;
   size_t bankSelectorIndex = 0;
 
   SudokuPuzzleBank bank;
   SudokuGame game;
+  std::string currentBankDisplayName;
   int puzzleIndex = 0;
   bool puzzleLoaded = false;
   bool lockLongPressConfirm = false;
@@ -51,7 +53,7 @@ class SudokuActivity final : public Activity {
   unsigned long transientUntilMs = 0;
 
   void scanBanks();
-  bool openBank(const std::string& path);
+  bool openBank(const SudokuPuzzleBank::Entry& entry);
   bool loadPuzzleAt(int index);
   void startRandomPuzzle();
   void toggleControlMode();

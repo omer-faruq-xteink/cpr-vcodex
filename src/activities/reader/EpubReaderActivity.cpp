@@ -1906,9 +1906,16 @@ void EpubReaderActivity::saveHighlightToMyCLippings() {
     LOG_ERR("ERS", "saveHighlight: failed to open /MyClippings.txt");
     return;
   }
+  const std::string chapterTitle = getStatsChapterTitle(*epub, currentSpineIndex);
+  std::string meta = "- Your Highlight";
+  if (!chapterTitle.empty()) {
+    meta += " | " + chapterTitle;
+  }
+  meta += " | Location: " + std::to_string(progressPercent) + "%\n\n";
+
   const std::string entry = std::string("==========\n") +
                             epub->getTitle() + " (" + epub->getAuthor() + ")\n" +
-                            "- Your Highlight | Location: " + std::to_string(progressPercent) + "%\n\n" +
+                            meta +
                             selectedText + "\n\n";
   file.write(entry.c_str(), entry.size());
   file.close();

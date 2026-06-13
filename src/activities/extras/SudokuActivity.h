@@ -42,7 +42,7 @@ class SudokuActivity final : public Activity {
 
   SudokuPuzzleBank bank;
   SudokuGame game;
-  std::string currentBankDisplayName;
+  std::string currentBankFileName;
   int puzzleIndex = 0;
   bool puzzleLoaded = false;
   bool lockLongPressConfirm = false;

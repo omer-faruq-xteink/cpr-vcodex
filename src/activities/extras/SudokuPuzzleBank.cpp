@@ -126,7 +126,8 @@ std::vector<SudokuPuzzleBank::Entry> SudokuPuzzleBank::listBanks(const std::stri
 
     std::sort(names.begin(), names.end());
     for (const auto& filename : names) {
-      entries.push_back({dirPath + "/" + filename, folder.format, std::string(folder.folder) + "/" + stripExtension(filename)});
+      std::string baseName = stripExtension(filename);
+      entries.push_back({dirPath + "/" + filename, folder.format, std::string(folder.folder) + "/" + baseName, baseName});
     }
   }
 

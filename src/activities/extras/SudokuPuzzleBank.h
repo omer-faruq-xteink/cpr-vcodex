@@ -38,7 +38,8 @@ class SudokuPuzzleBank {
   struct Entry {
     std::string path;
     Format format;
-    std::string displayName;  // "<format-folder>/<file name without extension>"
+    std::string displayName;  // "<format-folder>/<file name without extension>", for the bank list
+    std::string fileName;     // "<file name without extension>", for the in-game header
   };
 
   // Scans the known format subfolders of `sudokuDir` for puzzle files.

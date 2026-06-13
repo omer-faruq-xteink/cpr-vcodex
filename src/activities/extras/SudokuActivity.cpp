@@ -66,7 +66,7 @@ void SudokuActivity::loadProgress() {
     if (bankEntries[i].path == savedBankPath) {
       bankSelectorIndex = i;
       if (bank.open(savedBankPath, bankEntries[i].format) && loadPuzzleAt(savedIndex)) {
-        currentBankDisplayName = bankEntries[i].displayName;
+        currentBankFileName = bankEntries[i].fileName;
         game.applySavedBoard(savedBoard);
       }
       return;
@@ -98,7 +98,7 @@ bool SudokuActivity::openBank(const SudokuPuzzleBank::Entry& entry) {
     showTransientMessage(tr(STR_SUDOKU_LOAD_ERROR));
     return false;
   }
-  currentBankDisplayName = entry.displayName;
+  currentBankFileName = entry.fileName;
   startRandomPuzzle();
   return puzzleLoaded;
 }
@@ -340,7 +340,7 @@ void SudokuActivity::renderPlaying() {
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   const std::string subtitle = std::string(tr(STR_SUDOKU_REMAINING)) + ": " + std::to_string(game.remainingCells());
-  HeaderDateUtils::drawHeaderWithDate(renderer, currentBankDisplayName.c_str(), subtitle.c_str());
+  HeaderDateUtils::drawHeaderWithDate(renderer, currentBankFileName.c_str(), subtitle.c_str());
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;

@@ -277,8 +277,17 @@ void drawAchievementPanel(const GfxRenderer& renderer, const Rect& rect, const b
 void drawLatestBookPanel(const GfxRenderer& renderer, const Rect& rect) {
   renderer.drawRoundedRect(rect.x, rect.y, rect.width, rect.height, 2, 8, true);
 
-  const auto books = getRecentSleepBooks(1);
-  if (books.empty()) {
+  // Prefer the book currently open in the reader; fall back to latest stats when
+  // the dashboard is shown without a current book context.
+  const ReadingBookStats* selectedBook = getCurrentSleepBook();
+  if (!selectedBook) {
+    const auto books = getRecentSleepBooks(1);
+    if (!books.empty()) {
+      selectedBook = books.front();
+    }
+  }
+
+  if (!selectedBook) {
     renderer.drawCenteredText(SMALL_FONT_ID, rect.y + rect.height / 2 - 6, tr(STR_NO_READING_STATS));
     return;
   }
@@ -286,7 +295,7 @@ void drawLatestBookPanel(const GfxRenderer& renderer, const Rect& rect) {
   const int sidePadding = 14;
   const int innerX = rect.x + sidePadding;
   const int innerW = rect.width - sidePadding * 2;
-  const ReadingBookStats& book = *books.front();
+  const ReadingBookStats& book = *selectedBook;
 
   drawTextClipped(renderer, UI_12_FONT_ID, innerX, rect.y + 22, getSleepBookTitle(book), innerW - 58, true,
                   EpdFontFamily::BOLD);

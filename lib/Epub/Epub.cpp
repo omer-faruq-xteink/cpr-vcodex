@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <JpegToBmpConverter.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <PngToBmpConverter.h>
 #include <ZipFile.h>
 
@@ -286,6 +287,7 @@ void Epub::parseCssFiles() const {
   constexpr size_t MAX_CSS_FILE_SIZE = 128 * 1024;  // 128KB
   // Minimum heap required before attempting CSS parsing
   constexpr size_t MIN_HEAP_FOR_CSS_PARSING = 64 * 1024;  // 64KB
+  constexpr size_t MIN_MAX_ALLOC_FOR_CSS_PARSING = 32 * 1024;
 
   if (cssFiles.empty()) {
     LOG_DBG("EBP", "No CSS files to parse, but CssParser created for inline styles");
@@ -304,10 +306,11 @@ void Epub::parseCssFiles() const {
     LOG_DBG("EBP", "Parsing CSS file: %s", cssPath.c_str());
 
     // Check heap before parsing - CSS parsing allocates heavily
-    const uint32_t freeHeap = ESP.getFreeHeap();
-    if (freeHeap < MIN_HEAP_FOR_CSS_PARSING) {
-      LOG_ERR("EBP", "Insufficient heap for CSS parsing (%u bytes free, need %zu), skipping: %s", freeHeap,
-              MIN_HEAP_FOR_CSS_PARSING, cssPath.c_str());
+    const auto heap = MemoryBudget::snapshot();
+    if (!MemoryBudget::hasHeap(heap, MIN_HEAP_FOR_CSS_PARSING, MIN_MAX_ALLOC_FOR_CSS_PARSING)) {
+      LOG_ERR("EBP", "Insufficient heap for CSS parsing (%u free, %u max alloc, need %zu/%zu), skipping: %s",
+              heap.freeHeap, heap.maxAllocHeap, MIN_HEAP_FOR_CSS_PARSING, MIN_MAX_ALLOC_FOR_CSS_PARSING,
+              cssPath.c_str());
       continue;
     }
 
@@ -831,6 +834,17 @@ bool Epub::readItemContentsToStream(const std::string& itemHref, Print& out, con
 
   const std::string path = FsHelpers::normalisePath(itemHref);
   return ZipFile(filepath).readFileToStream(path.c_str(), out, chunkSize);
+}
+
+bool Epub::readItemPrefixToBuffer(const std::string& itemHref, uint8_t* out, const size_t maxBytes, size_t* bytesRead,
+                                  const size_t chunkSize) const {
+  if (itemHref.empty()) {
+    LOG_DBG("EBP", "Failed to read item prefix, empty href");
+    return false;
+  }
+
+  const std::string path = FsHelpers::normalisePath(itemHref);
+  return ZipFile(filepath).readFilePrefixToBuffer(path.c_str(), out, maxBytes, bytesRead, chunkSize);
 }
 
 bool Epub::getItemSize(const std::string& itemHref, size_t* size) const {

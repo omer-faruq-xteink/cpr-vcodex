@@ -47,12 +47,12 @@ The philosophy of this fork is simple: keep the firmware fast, stable, and focus
 |---|---|
 | Project | `CPR-vCodex` |
 | Device | `Xteink X4`; `Xteink X3` compatibility reported by users, not personally tested |
-| Current release (CPR-vCodex) build | [`1.3.0.28-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.28-cpr-vcodex) |
+| Current release (CPR-vCodex) build | [`1.3.0.29-cpr-vcodex`](https://github.com/franssjz/cpr-vcodex/releases/tag/1.3.0.29-cpr-vcodex) |
 | Latest SD font package | [`sd-fonts-m1-b4`](https://github.com/franssjz/cpr-vcodex/releases/tag/sd-fonts-m1-b4) |
 | Changelog | [CHANGELOG.md](./CHANGELOG.md) |
 | Current release sync | Selected CrossPoint Reader fixes after [`3392b3e3`](https://github.com/crosspoint-reader/crosspoint-reader/commit/3392b3e3) through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078), including EPUB image/cache/CSS/parser performance, KOReader chapter-start mapping, font-upload hardening, long-press chapter-start navigation, progress-bar placement, and `open-x4-sdk` [`26648d6`](https://github.com/crosspoint-reader/community-sdk/commit/26648d643a1c883ab2f71e1869d05fe2a0c9d498). Hebrew/RTL, translation-only churn, OpenDyslexic storage migration, docs-only guide updates, and t5s3 README-only changes remain deferred. |
-| Current release fixes | Fixes premature EPUB completion/progress saves, improves KOReader Sync/Auth low-memory handling, and reduces reader/flashcard memory pressure. |
-| Latest release notes | - KOReader Sync/Auth now frees SD-font metadata, reading-stats data, renderer font caches, and NTP memory around HTTPS, then restores reader state before returning to normal UI paths.<br>- EPUB progress handling avoids false 100% completion/end-book achievements while page navigation is still in progress.<br>- EPUB/TXT/XTC progress files are written atomically and recovered more safely, with lower-allocation path/render helpers and lower-spike flashcard deck loading. |
+| Current release fixes | Reduces EPUB indexing stalls/crashes on optimized books that repeat presentational images hundreds of times while keeping hard low-memory guards. |
+| Latest release notes | - EPUB indexing skips repeated `role="presentation"`/`aria-hidden` inline images and caps duplicate inline image probes per chapter.<br>- Low-memory section builds can drop CSS/cache memory and continue below the soft heap watermark when hard heap headroom remains.<br>- Section cache failures now fall back to a minimal page-load error screen, and page turns are guarded after failed section loads. |
 | Base firmware line | `CrossPoint Reader 1.3.0` |
 | Latest official commit reviewed | [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078) |
 | Latest official commit incorporated | Selected EPUB/rendering, cache, filesystem, image, KOReader Sync, font-upload, SDK, and navigation fixes from [`7accc607`](https://github.com/crosspoint-reader/crosspoint-reader/commit/7accc607) through [`fd5b8078`](https://github.com/crosspoint-reader/crosspoint-reader/commit/fd5b8078); larger upstream bookmark, RTL, OTA/downloader, translation-bulk, and settings rewrites remain intentionally deferred. |
@@ -577,7 +577,7 @@ Each packaged dev build now keeps the base firmware line and the local flash ide
 Practical values to look at:
 
 - base firmware line: `CrossPoint Reader 1.3.0`
-- current release build style: `1.3.0.28-cpr-vcodex`
+- current release build style: `1.3.0.29-cpr-vcodex`
 - packaged artifact style: `artifacts/<version>-cpr-vcodex.bin`
 
 The incremental `.bNNNN` suffix exists specifically to help distinguish newer flashes from older ones on real hardware.
@@ -647,10 +647,10 @@ Release publishing:
 - before tagging, run:
 
 ```powershell
-python scripts/pre_release_check.py --tag 1.3.0.28-cpr-vcodex
+python scripts/pre_release_check.py --tag 1.3.0.29-cpr-vcodex
 ```
 
-- push a stable tag named like `1.3.0.28-cpr-vcodex`
+- push a stable tag named like `1.3.0.29-cpr-vcodex`
 - the release workflow builds `gh_release`, validates that the packaged artifact
   name matches the tag, and attaches only the flashable `<tag>.bin` to the GitHub Release
 - tagged CI release builds derive the firmware release number from the tag, not

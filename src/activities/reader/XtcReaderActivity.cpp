@@ -16,6 +16,7 @@
 #include "CrossPointState.h"
 #include "AchievementsStore.h"
 #include "MappedInputManager.h"
+#include "ProgressFile.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "ReaderUtils.h"
@@ -313,6 +314,50 @@ void XtcReaderActivity::renderPage() {
   const uint16_t pageHeight = xtc->getPageHeight();
   const uint8_t bitDepth = xtc->getBitDepth();
 
+  if (bitDepth == 1) {
+    renderer.clearScreen();
+
+    const size_t srcRowBytes = (pageWidth + 7) / 8;
+    const xtc::XtcError streamResult = xtc->loadPageStreaming(
+        currentPage,
+        [&](const uint8_t* data, size_t size, size_t offset) {
+          for (size_t i = 0; i < size; i++) {
+            const size_t absoluteOffset = offset + i;
+            const uint16_t srcY = static_cast<uint16_t>(absoluteOffset / srcRowBytes);
+            if (srcY >= pageHeight) {
+              continue;
+            }
+            const uint16_t byteX = static_cast<uint16_t>(absoluteOffset % srcRowBytes);
+            const uint16_t baseX = static_cast<uint16_t>(byteX * 8);
+            const uint8_t packed = data[i];
+            for (uint8_t bit = 0; bit < 8; bit++) {
+              const uint16_t srcX = static_cast<uint16_t>(baseX + bit);
+              if (srcX >= pageWidth) {
+                break;
+              }
+              const bool isBlack = !((packed >> (7 - bit)) & 1);  // XTC: 0 = black, 1 = white
+              if (isBlack) {
+                renderer.drawPixel(srcX, srcY, true);
+              }
+            }
+          }
+        },
+        1024);
+
+    if (streamResult != xtc::XtcError::OK) {
+      LOG_ERR("XTR", "Failed to stream page %lu: bitDepth=%u error=%s", currentPage, bitDepth,
+              xtc::errorToString(streamResult));
+      renderer.clearScreen();
+      renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
+      renderer.displayBuffer();
+      return;
+    }
+
+    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, forceFullRefresh);
+    LOG_DBG("XTR", "Rendered page %lu/%lu (1-bit streaming)", currentPage + 1, xtc->getPageCount());
+    return;
+  }
+
   // Calculate buffer size for one page
   // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
   // XTH (2-bit): Two bit planes, column-major, ((width * height + 7) / 8) * 2 bytes
@@ -398,8 +443,24 @@ void XtcReaderActivity::renderPage() {
       }
     }
 
-    // Display BW with the configured reader refresh policy
-    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, forceFullRefresh);
+    HalDisplay::RefreshMode configuredRefreshMode = HalDisplay::FAST_REFRESH;
+    const bool hasConfiguredRefreshMode = ReaderUtils::getConfiguredReaderRefreshMode(configuredRefreshMode);
+    if (forceFullRefresh) {
+      renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+      renderer.preconditionGrayscale();
+      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+    } else if (hasConfiguredRefreshMode) {
+      renderer.displayBuffer(configuredRefreshMode);
+      renderer.preconditionGrayscale();
+      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+    } else if (pagesUntilFullRefresh <= 1) {
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      renderer.preconditionGrayscale();
+      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+    } else {
+      renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
+      pagesUntilFullRefresh--;
+    }
 
     // Pass 2: LSB buffer - mark DARK gray only (XTH value 1)
     // In LUT: 0 bit = apply gray effect, 1 bit = untouched
@@ -481,22 +542,18 @@ void XtcReaderActivity::saveProgress() const {
   READING_STATS.updateProgress(xtc->calculateProgress(currentPage), currentPage + 1 >= xtc->getPageCount(),
                                getChapterTitleForStats(*xtc, currentPage), getChapterProgressForStats(*xtc, currentPage));
 
-  FsFile f;
   std::string progressPath = getStableProgressPath(stableBookId);
   if (!progressPath.empty()) {
     BookIdentity::ensureStableDataDir(stableBookId);
   } else {
     progressPath = getLegacyProgressPath(*xtc);
   }
-  if (Storage.openFileForWrite("XTR", progressPath, f)) {
-    uint8_t data[4];
-    data[0] = currentPage & 0xFF;
-    data[1] = (currentPage >> 8) & 0xFF;
-    data[2] = (currentPage >> 16) & 0xFF;
-    data[3] = (currentPage >> 24) & 0xFF;
-    f.write(data, 4);
-    f.close();
-  }
+  uint8_t data[4];
+  data[0] = currentPage & 0xFF;
+  data[1] = (currentPage >> 8) & 0xFF;
+  data[2] = (currentPage >> 16) & 0xFF;
+  data[3] = (currentPage >> 24) & 0xFF;
+  ProgressFile::writeAtomicPath("XTR", progressPath, data, sizeof(data));
 }
 
 void XtcReaderActivity::loadProgress() {

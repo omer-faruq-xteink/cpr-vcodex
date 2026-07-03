@@ -12,6 +12,18 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/NetworkMemory.h"
+#include "util/TimeUtils.h"
+
+namespace {
+void prepareMemoryBeforeAuthNetwork(GfxRenderer& renderer, const char* stage) {
+  NetworkMemory::prepareBeforeNetwork(renderer, "KOSync", stage);
+}
+
+void restoreMemoryAfterAuthNetwork(GfxRenderer& renderer, const char* stage) {
+  NetworkMemory::restoreAfterNetwork(renderer, "KOSync", stage);
+}
+}  // namespace
 
 void KOReaderAuthActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
@@ -27,15 +39,27 @@ void KOReaderAuthActivity::onWifiSelectionComplete(const bool success) {
   {
     RenderLock lock(*this);
     state = AUTHENTICATING;
+    statusMessage = tr(STR_SYNCING_TIME);
+  }
+  requestUpdateAndWait();
+
+  const bool ntpSuccess = TimeUtils::syncTimeWithNtp(5000);
+  LOG_DBG("KOSync", "Auth NTP sync %s", ntpSuccess ? "ok" : "timeout");
+  TimeUtils::stopNtp();
+
+  {
+    RenderLock lock(*this);
     statusMessage = tr(STR_AUTHENTICATING);
   }
-  requestUpdate();
+  requestUpdateAndWait();
 
   performAuthentication();
 }
 
 void KOReaderAuthActivity::performAuthentication() {
+  prepareMemoryBeforeAuthNetwork(renderer, "before_authenticate");
   const auto result = KOReaderSyncClient::authenticate();
+  restoreMemoryAfterAuthNetwork(renderer, "after_authenticate_restore");
 
   {
     RenderLock lock(*this);
@@ -51,6 +75,11 @@ void KOReaderAuthActivity::performAuthentication() {
     } else {
       state = FAILED;
       errorMessage = KOReaderSyncClient::errorString(result);
+      const char* detail = KOReaderSyncClient::lastFailureDetail();
+      if (detail && detail[0]) {
+        errorMessage += " - ";
+        errorMessage += detail;
+      }
     }
   }
   requestUpdate();
@@ -98,7 +127,10 @@ void KOReaderAuthActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_10_FONT_ID, top + height + 10, tr(STR_SYNC_READY));
   } else if (state == FAILED) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_AUTH_FAILED), true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(UI_10_FONT_ID, top + height + 10, errorMessage.c_str());
+    const auto lines = renderer.wrappedText(UI_10_FONT_ID, errorMessage.c_str(), pageWidth - 40, 4);
+    for (size_t i = 0; i < lines.size(); ++i) {
+      renderer.drawCenteredText(UI_10_FONT_ID, top + height + 10 + static_cast<int>(i) * height, lines[i].c_str());
+    }
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");

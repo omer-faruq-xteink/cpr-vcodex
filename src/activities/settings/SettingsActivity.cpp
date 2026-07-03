@@ -25,6 +25,7 @@
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
 #include "OtaUpdateActivity.h"
+#include "ReadingStatsImportActivity.h"
 #include "ReadingStatsStore.h"
 #include "SdCardFontGlobals.h"
 #include "SdFirmwareUpdateActivity.h"
@@ -203,6 +204,10 @@ const std::vector<SettingInfo>& getDeviceOnlyAppSettings() {
       SettingInfo::Action(StrId::STR_READING_STATS, SettingAction::ReadingStats),
       SettingInfo::Enum(StrId::STR_DAILY_GOAL, &CrossPointSettings::dailyGoalTarget,
                         {StrId::STR_MIN_15, StrId::STR_MIN_30, StrId::STR_MIN_45, StrId::STR_MIN_60}),
+      SettingInfo::Enum(
+          StrId::STR_READING_STATS_AUTOBACKUP, &CrossPointSettings::readingStatsAutoBackup,
+          {StrId::STR_STATE_OFF, StrId::STR_NUM_1, StrId::STR_NUM_7, StrId::STR_NUM_14, StrId::STR_NUM_21}),
+      SettingInfo::Action(StrId::STR_CLEAR_READING_STATS_BACKUPS, SettingAction::ClearReadingStatsBackups),
       SettingInfo::Toggle(StrId::STR_SHOW_AFTER_READING, &CrossPointSettings::showStatsAfterReading),
       SettingInfo::Toggle(StrId::STR_MOVE_COMPLETED_BOOKS, &CrossPointSettings::moveCompletedBooks),
       SettingInfo::Action(StrId::STR_RESET_READING_STATS, SettingAction::ResetReadingStats),
@@ -274,8 +279,8 @@ std::string utf8LimitChars(std::string text, const size_t maxChars) {
 }
 
 std::string getLatestReadingStatsImportPath() {
-  const std::string path = getReadingStatsExportPath();
-  return Storage.exists(path.c_str()) ? path : std::string();
+  const auto paths = ReadingStatsImportActivity::getImportPaths();
+  return paths.empty() ? std::string() : paths.front();
 }
 
 std::string getReadingStatsExportFileName() { return fileNameFromPath(getReadingStatsExportPath()); }
@@ -603,6 +608,7 @@ void SettingsActivity::toggleCurrentSetting() {
   }
 
   const auto& setting = *(*currentSettings)[selectedSetting];
+  const uint8_t previousReadingStatsAutoBackup = SETTINGS.readingStatsAutoBackup;
 
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
     // Toggle the boolean value using the member pointer
@@ -699,25 +705,43 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       }
       case SettingAction::ImportReadingStats:
-        startActivityForResult(
-            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_IMPORT_READING_STATS_CONFIRM), ""),
-            [this](const ActivityResult& result) {
-              if (!result.isCancelled) {
-                const std::string importPath = getLatestReadingStatsImportPath();
-                if (importPath.empty()) {
-                  showTransientPopup(tr(STR_NO_READING_STATS_EXPORT), -1, 700);
-                } else {
-                  showTransientPopup(tr(STR_IMPORTING), 20, 120);
-                  const bool imported = READING_STATS.importFromFile(importPath);
-                  if (imported) {
-                    ACHIEVEMENTS.rebuildProgressFromCurrentStats();
-                  }
-                  showTransientPopup(imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED), imported ? 100 : -1,
-                                     imported ? 350 : 700);
-                }
-              }
-              requestUpdate(true);
-            });
+        if (ReadingStatsImportActivity::getImportPaths().empty()) {
+          showTransientPopup(tr(STR_NO_READING_STATS_EXPORT), -1, 700);
+          requestUpdate(true);
+          break;
+        }
+        startActivityForResult(std::make_unique<ReadingStatsImportActivity>(renderer, mappedInput),
+                               [this](const ActivityResult& result) {
+                                 if (!result.isCancelled) {
+                                   const auto* path = std::get_if<FilePathResult>(&result.data);
+                                   if (path == nullptr || path->path.empty()) {
+                                     showTransientPopup(tr(STR_IMPORT_FAILED), -1, 700);
+                                   } else {
+                                     showTransientPopup(tr(STR_IMPORTING), 20, 120);
+                                     const bool imported = READING_STATS.importFromFile(path->path);
+                                     if (imported) {
+                                       ACHIEVEMENTS.rebuildProgressFromCurrentStats();
+                                     }
+                                     showTransientPopup(imported ? tr(STR_IMPORT_DONE) : tr(STR_IMPORT_FAILED),
+                                                        imported ? 100 : -1, imported ? 350 : 700);
+                                   }
+                                 }
+                                 requestUpdate(true);
+                               });
+        break;
+      case SettingAction::ClearReadingStatsBackups:
+        startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput,
+                                                                      tr(STR_CLEAR_READING_STATS_BACKUPS_CONFIRM), ""),
+                               [this](const ActivityResult& result) {
+                                 if (!result.isCancelled) {
+                                   showTransientPopup(tr(STR_CLEARING_READING_STATS_BACKUPS), 20, 120);
+                                   const int removedCount = READING_STATS.clearAutoBackups();
+                                   showTransientPopup(removedCount > 0 ? tr(STR_READING_STATS_BACKUPS_CLEARED)
+                                                                       : tr(STR_NO_READING_STATS_BACKUPS),
+                                                      removedCount > 0 ? 100 : -1, removedCount > 0 ? 350 : 700);
+                                 }
+                                 requestUpdate(true);
+                               });
         break;
       case SettingAction::ReadingHeatmap:
         startActivityForResult(std::make_unique<ReadingHeatmapActivity>(renderer, mappedInput), resultHandler);
@@ -804,7 +828,19 @@ void SettingsActivity::toggleCurrentSetting() {
     requestUpdate(true);
   }
 
+  const bool createInitialReadingStatsBackup = setting.valuePtr == &CrossPointSettings::readingStatsAutoBackup &&
+                                               SETTINGS.readingStatsAutoBackup != previousReadingStatsAutoBackup &&
+                                               SETTINGS.getReadingStatsAutoBackupIntervalDays() > 0 &&
+                                               !READING_STATS.hasAutoBackups();
+
   SETTINGS.saveToFile();
+  if (createInitialReadingStatsBackup) {
+    showTransientPopup(tr(STR_READING_STATS_BACKUP_RUNNING), 20, 120);
+    const bool backupReady = READING_STATS.ensureAutoBackupForEnabledSetting();
+    showTransientPopup(backupReady ? tr(STR_READING_STATS_BACKUP_DONE) : tr(STR_READING_STATS_BACKUP_PENDING),
+                       backupReady ? 100 : -1, backupReady ? 350 : 700);
+    requestUpdate(true);
+  }
 }
 
 void SettingsActivity::renderAppSettingsList(const Rect& rect) const {
